@@ -1,0 +1,8 @@
+FROM ubuntu:24.04
+RUN apt-get update -qq && DEBIAN_FRONTEND=noninteractive apt-get install -y --no-install-recommends \
+    cmake g++ ninja-build libobs-dev qt6-base-dev \
+    && rm -rf /var/lib/apt/lists/*
+COPY . /src
+RUN cmake -S /src -B /build -G Ninja -DCMAKE_BUILD_TYPE=Release \
+    && cmake --build /build
+# Compilation check only; this image does not run OBS or produce signed installers.
