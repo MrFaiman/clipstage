@@ -1,0 +1,37 @@
+name: CI
+on:
+  push:
+  pull_request:
+jobs:
+  app:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: oven-sh/setup-bun@v2
+        with:
+          bun-version: 1.4.2
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+      - run: bun install --frozen-lockfile
+      - run: bun run setup && bun run db:generate
+      - run: bun run check && bun run build
+      - run: docker compose up -d
+      - name: Wait for PostgreSQL and storage
+        run: |
+          for i in $(seq 1 30); do
+            docker compose exec -T postgres pg_isready -U clipstage && curl -s http://localhost:9000 >/dev/null && break
+            sleep 2
+          done
+      - run: bun run db:deploy && bun run storage:init
+      - run: bun run test:integration
+      - run: bunx playwright install --with-deps chromium
+      - run: bun run test:e2e
+      - run: bun run test:live
+      - if: always()
+        run: docker compose down
+  native-compile:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - run: docker build -f plugins/obs/Dockerfile.buildcheck plugins/obs
