@@ -1,0 +1,11 @@
+{
+  "identities": [
+    {
+      "name": "clipstage-local",
+      "credentials": [
+        { "accessKey": "clipstage", "secretKey": "clipstage-local-secret" }
+      ],
+      "actions": ["Admin", "Read", "Write", "List", "Tagging"]
+    }
+  ]
+}

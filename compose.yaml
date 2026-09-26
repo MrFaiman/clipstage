@@ -1,0 +1,26 @@
+services:
+  postgres:
+    image: postgres:17-alpine
+    environment:
+      POSTGRES_DB: clipstage
+      POSTGRES_USER: clipstage
+      POSTGRES_PASSWORD: clipstage
+    ports:
+      - "127.0.0.1:5432:5432"
+    volumes:
+      - postgres-data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U clipstage"]
+      interval: 5s
+      retries: 10
+  storage:
+    image: chrislusf/seaweedfs:4.17
+    command: server -filer -s3 -s3.port=9000 -s3.config=/etc/seaweedfs/s3.json -dir=/data -ip=storage -master.volumeSizeLimitMB=1000 -volume.max=20
+    ports:
+      - "127.0.0.1:9000:9000"
+    volumes:
+      - storage-data:/data
+      - ./infra/s3.local.json:/etc/seaweedfs/s3.json:ro
+volumes:
+  postgres-data:
+  storage-data:
