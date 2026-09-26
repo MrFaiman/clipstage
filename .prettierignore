@@ -1,0 +1,7 @@
+bun.lock
+node_modules
+.next
+dist
+*.mp4
+plugins/obs
+packages/database/prisma/migrations
