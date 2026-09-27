@@ -1,4 +1,6 @@
 import { z } from "zod";
+import { videoProjectSchema, type ClipProject } from "./video-project";
+export * from "./video-project";
 
 export const providers = ["KICK", "TWITCH", "YOUTUBE"] as const;
 export const clipStatuses = [
@@ -56,6 +58,7 @@ export const updateClipSchema = z
     status: z.enum(["INBOX", "EDITING", "IN_REVIEW", "APPROVED"]).optional(),
     assigneeId: z.string().cuid().nullable().optional(),
     trim: trimSchema.nullable().optional(),
+    project: videoProjectSchema.nullable().optional(),
   })
   .strict();
 export type UpdateClip = z.infer<typeof updateClipSchema>;
@@ -112,6 +115,7 @@ export interface Clip {
   sizeBytes: number;
   durationSeconds: number | null;
   trim: { start: number; end: number } | null;
+  project?: ClipProject | null;
   assignee: Person | null;
   uploadedBy: string;
   createdAt: string;

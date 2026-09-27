@@ -149,6 +149,7 @@ model Clip {
   durationSeconds Float?
   trimStart       Float?
   trimEnd         Float?
+  project         Json?
   assigneeId      String?
   version         Int        @default(0)
   createdAt       DateTime   @default(now())
