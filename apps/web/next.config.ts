@@ -1,5 +1,9 @@
+import path from "node:path";
 import type { NextConfig } from "next";
 const config: NextConfig = {
+  output: "standalone",
+  // Workspace packages live outside apps/web and must be traced into the build.
+  outputFileTracingRoot: path.join(import.meta.dirname, "../.."),
   transpilePackages: [
     "@clipstage/contracts",
     "@videoflow/core",
