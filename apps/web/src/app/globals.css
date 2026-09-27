@@ -130,6 +130,7 @@ a:focus-visible {
 }
 .workspace-icon {
   position: relative;
+  overflow: hidden;
   background: #363b32;
   border: 1px solid #c2ed7b25;
   color: #d5e6bd;
@@ -151,6 +152,18 @@ a:focus-visible {
   border-radius: 50%;
   background: var(--primary);
   border: 1px solid #363b32;
+}
+.workspace-icon img {
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+  border-radius: inherit;
+}
+.workspace-logo {
+  width: 72px;
+  height: 72px;
+  border-radius: 16px;
+  font-size: 32px;
 }
 .nav-label {
   font-size: 9px;

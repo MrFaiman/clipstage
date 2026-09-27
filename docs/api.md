@@ -29,6 +29,10 @@ Relevant statuses: 400 invalid input/pending upload, 401 absent/expired authenti
 | GET    | `/auth/me`                                           | Safe user profile, connections, workspace memberships                     |
 | POST   | `/auth/logout`                                       | Revoke current session and clear cookie                                   |
 | POST   | `/workspaces`                                        | Create workspace; body `{ "name": "My studio" }`                          |
+| PATCH  | `/workspaces/:workspaceId`                           | Owner; body `{ "name" }`; renames the workspace                           |
+| POST   | `/workspaces/:workspaceId/logo`                      | Owner; body `{ mimeType, sizeBytes }`; JPEG, PNG, or WebP up to 2 MiB     |
+| POST   | `/workspaces/:workspaceId/logo/complete`             | Owner; verifies the upload and stores its object key                      |
+| DELETE | `/workspaces/:workspaceId/logo`                      | Owner; removes the logo                                                   |
 | GET    | `/workspaces/:workspaceId/members`                   | Members                                                                   |
 | DELETE | `/workspaces/:workspaceId/members/:userId`           | Owner only; cannot remove owner; unassigns clips                          |
 | GET    | `/workspaces/:workspaceId/invitations`               | Owner; unexpired pending invites                                          |

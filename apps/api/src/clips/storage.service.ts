@@ -1,5 +1,6 @@
 import { BadRequestException, Inject, Injectable } from "@nestjs/common";
 import {
+  DeleteObjectCommand,
   GetObjectCommand,
   HeadObjectCommand,
   PutObjectCommand,
@@ -64,6 +65,11 @@ export class StorageService {
       throw new BadRequestException(
         "Uploaded object does not match its declared size or content type. Create a new upload.",
       );
+  }
+  async remove(key: string) {
+    await this.client.send(
+      new DeleteObjectCommand({ Bucket: this.env.S3_BUCKET, Key: key }),
+    );
   }
   async read(key: string, fileName?: string) {
     return getSignedUrl(

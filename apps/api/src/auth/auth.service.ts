@@ -10,7 +10,10 @@ import { Database } from "../common/database";
 import { encrypt, hashToken, randomToken, safeEqual } from "../common/crypto";
 import { ENV, type Env } from "../config";
 import { KickProvider } from "./kick.provider";
-import { claimInvites } from "../workspaces/workspaces.service";
+import {
+  claimInvites,
+  WorkspacesService,
+} from "../workspaces/workspaces.service";
 
 const SESSION_AGE = 1000 * 60 * 60 * 24 * 30;
 const STATE_AGE = 1000 * 60 * 10;
@@ -21,6 +24,7 @@ export class AuthService {
     @Inject(Database) private readonly db: Database,
     @Inject(ENV) private readonly env: Env,
     @Inject(KickProvider) private readonly kick: KickProvider,
+    @Inject(WorkspacesService) private readonly workspaces: WorkspacesService,
   ) {}
   private get cookieName() {
     return this.env.NODE_ENV === "production"
@@ -178,7 +182,7 @@ export class AuthService {
           orderBy: { createdAt: "asc" },
           select: {
             role: true,
-            workspace: { select: { id: true, name: true } },
+            workspace: { select: { id: true, name: true, logoKey: true } },
           },
         },
       },
@@ -188,10 +192,11 @@ export class AuthService {
       name: user.name,
       avatarUrl: user.avatarUrl,
       connections: user.accounts,
-      workspaces: user.memberships.map((membership) => ({
-        ...membership.workspace,
-        role: membership.role,
-      })),
+      workspaces: await Promise.all(
+        user.memberships.map((membership) =>
+          this.workspaces.present(membership.workspace, membership.role),
+        ),
+      ),
     };
   }
   async logout(req: Request, res: Response) {

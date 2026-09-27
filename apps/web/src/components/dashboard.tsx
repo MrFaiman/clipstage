@@ -84,7 +84,7 @@ const tabs: { status: ClipStatus | "ALL"; label: string }[] = [
 
 export function Dashboard({
   viewer,
-  workspace,
+  workspace: loadedWorkspace,
   initialClips,
   initialMembers,
   demo,
@@ -96,6 +96,10 @@ export function Dashboard({
   demo: boolean;
 }) {
   const router = useRouter();
+  const [workspace, setWorkspace] = useState(loadedWorkspace);
+  useEffect(() => {
+    setWorkspace(loadedWorkspace);
+  }, [loadedWorkspace]);
   const section = useUiStore((state) => state.section),
     setSection = useUiStore((state) => state.setSection);
   const query = useUiStore((state) => state.query),
@@ -217,6 +221,17 @@ export function Dashboard({
       setCreating(false);
     }
   }
+  function applyWorkspace(next: Workspace) {
+    setWorkspace((current) => {
+      if (
+        current.logoUrl?.startsWith("blob:") &&
+        current.logoUrl !== next.logoUrl
+      )
+        URL.revokeObjectURL(current.logoUrl);
+      return next;
+    });
+    if (!demo) router.refresh();
+  }
   return (
     <div className="app-shell">
       <a href="#main-content" className="skip-link">
@@ -242,7 +257,11 @@ export function Dashboard({
         </div>
         <div className="workspace-switch">
           <div className="workspace-icon">
-            {initials(workspace.name).slice(0, 1)}
+            {workspace.logoUrl ? (
+              <img src={workspace.logoUrl} alt="" />
+            ) : (
+              initials(workspace.name).slice(0, 1)
+            )}
             <span />
           </div>
           <div className="min-w-0 flex-1">
@@ -269,7 +288,7 @@ export function Dashboard({
                     key={item.id}
                     className="bg-[#232626]"
                   >
-                    {item.name}
+                    {item.id === workspace.id ? workspace.name : item.name}
                   </option>
                 ))}
               </select>
@@ -664,9 +683,10 @@ export function Dashboard({
           ) : section === "team" ? (
             <TeamPanel
               members={team}
+              workspace={workspace}
               owner={owner}
-              workspaceId={workspace.id}
               demo={demo}
+              onUpdated={applyWorkspace}
               onInvite={() => setInviteOpen(true)}
               onCreate={() => setCreateOpen(true)}
               onRemove={async (id) => {

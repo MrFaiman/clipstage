@@ -81,6 +81,7 @@ model Session {
 model Workspace {
   id          String       @id @default(cuid())
   name        String
+  logoKey     String?
   createdAt   DateTime     @default(now())
   members     Membership[]
   clips       Clip[]

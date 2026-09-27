@@ -1,5 +1,5 @@
 "use client";
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import Link from "next/link";
 import useSWR from "swr";
 import {
@@ -19,17 +19,21 @@ import {
   Youtube,
 } from "lucide-react";
 import { toast } from "sonner";
-import type {
-  Connection,
-  Device,
-  InviteResult,
-  Member,
-  PendingInvite,
-  Viewer,
-  Workspace,
+import {
+  LOGO_TYPES,
+  MAX_LOGO_BYTES,
+  workspaceSchema,
+  type Connection,
+  type Device,
+  type InviteResult,
+  type LogoTicket,
+  type Member,
+  type PendingInvite,
+  type Viewer,
+  type Workspace,
 } from "@clipstage/contracts";
-import { API_URL, api, post } from "@/lib/api";
-import { message } from "@/lib/utils";
+import { API_URL, api, post, uploadFile } from "@/lib/api";
+import { initials, message } from "@/lib/utils";
 import { Avatar } from "./avatar";
 import { KickMark } from "./brand";
 import { Button } from "./ui/button";
@@ -49,19 +53,184 @@ async function copy(value: string) {
     toast.error("Clipboard unavailable. Select and copy the text manually.");
   }
 }
+function logoMime(file: File) {
+  if ((LOGO_TYPES as readonly string[]).includes(file.type))
+    return file.type as (typeof LOGO_TYPES)[number];
+  const extension = file.name.split(".").pop()?.toLowerCase();
+  if (extension === "jpg" || extension === "jpeg") return "image/jpeg";
+  if (extension === "png") return "image/png";
+  if (extension === "webp") return "image/webp";
+  return null;
+}
+function WorkspaceForm({
+  workspace,
+  demo,
+  onUpdated,
+}: {
+  workspace: Workspace;
+  demo: boolean;
+  onUpdated: (workspace: Workspace) => void;
+}) {
+  const [name, setName] = useState(workspace.name);
+  const [file, setFile] = useState<File | null>(null);
+  const [preview, setPreview] = useState<string | null>(null);
+  const [removeLogo, setRemoveLogo] = useState(false);
+  const [busy, setBusy] = useState(false);
+  useEffect(() => {
+    setName(workspace.name);
+    setFile(null);
+    setRemoveLogo(false);
+  }, [workspace]);
+  useEffect(() => {
+    if (!file) {
+      setPreview(null);
+      return;
+    }
+    const url = URL.createObjectURL(file);
+    setPreview(url);
+    return () => URL.revokeObjectURL(url);
+  }, [file]);
+  const shown = preview ?? (removeLogo ? null : workspace.logoUrl);
+  const parsed = workspaceSchema.safeParse({ name });
+  return (
+    <form
+      className="panel-card mb-5"
+      onSubmit={async (event) => {
+        event.preventDefault();
+        if (!parsed.success) return;
+        setBusy(true);
+        try {
+          if (demo) {
+            onUpdated({
+              ...workspace,
+              name: parsed.data.name,
+              logoUrl: file
+                ? URL.createObjectURL(file)
+                : removeLogo
+                  ? null
+                  : workspace.logoUrl,
+            });
+            setFile(null);
+            setRemoveLogo(false);
+            toast.success("Workspace updated");
+            return;
+          }
+          let next = workspace;
+          if (parsed.data.name !== workspace.name)
+            next = await api<Workspace>(`/workspaces/${workspace.id}`, {
+              method: "PATCH",
+              body: JSON.stringify({ name: parsed.data.name }),
+            });
+          if (file) {
+            const mimeType = logoMime(file);
+            if (!mimeType) throw new Error("Use a JPEG, PNG, or WebP logo.");
+            const ticket = await post<LogoTicket>(
+              `/workspaces/${workspace.id}/logo`,
+              { mimeType, sizeBytes: file.size },
+            );
+            await uploadFile(ticket.uploadUrl, file, ticket.headers, () => {});
+            next = await post<Workspace>(
+              `/workspaces/${workspace.id}/logo/complete`,
+              { key: ticket.key, mimeType, sizeBytes: file.size },
+            );
+          } else if (removeLogo && workspace.logoUrl) {
+            next = await api<Workspace>(`/workspaces/${workspace.id}/logo`, {
+              method: "DELETE",
+            });
+          }
+          onUpdated(next);
+          setFile(null);
+          setRemoveLogo(false);
+          toast.success("Workspace updated");
+        } catch (cause) {
+          toast.error(message(cause));
+        } finally {
+          setBusy(false);
+        }
+      }}
+    >
+      <div className="panel-card-header">
+        <div>
+          <h2>This workspace</h2>
+          <p>The name and logo appear in the sidebar for everyone here.</p>
+        </div>
+      </div>
+      <div className="flex flex-wrap items-end gap-6 px-6 py-6">
+        <div className="workspace-icon workspace-logo" aria-hidden="true">
+          {shown ? <img src={shown} alt="" /> : initials(name).slice(0, 1)}
+        </div>
+        <div className="min-w-56 flex-1 space-y-4">
+          <div>
+            <Label htmlFor="workspace-name">Workspace name</Label>
+            <Input
+              id="workspace-name"
+              name="name"
+              value={name}
+              maxLength={60}
+              required
+              disabled={busy}
+              onChange={(event) => setName(event.target.value)}
+            />
+          </div>
+          <div className="flex flex-wrap items-center gap-3">
+            <Label htmlFor="workspace-logo" className="mb-0">
+              Workspace logo
+            </Label>
+            <Input
+              id="workspace-logo"
+              name="logo"
+              type="file"
+              accept="image/jpeg,image/png,image/webp"
+              disabled={busy}
+              onChange={(event) => {
+                const next = event.target.files?.[0];
+                event.target.value = "";
+                if (!next) return;
+                if (!logoMime(next) || next.size > MAX_LOGO_BYTES) {
+                  toast.error("Use a JPEG, PNG, or WebP image up to 2 MB.");
+                  return;
+                }
+                setFile(next);
+                setRemoveLogo(false);
+              }}
+            />
+            {(file || (workspace.logoUrl && !removeLogo)) && (
+              <Button
+                type="button"
+                variant="ghost"
+                disabled={busy}
+                onClick={() => {
+                  setFile(null);
+                  setRemoveLogo(true);
+                }}
+              >
+                Remove logo
+              </Button>
+            )}
+          </div>
+        </div>
+        <Button type="submit" disabled={busy || !parsed.success}>
+          {busy && <Loader2 className="animate-spin" />}Save workspace
+        </Button>
+      </div>
+    </form>
+  );
+}
 export function TeamPanel({
   members,
+  workspace,
   owner,
-  workspaceId,
   demo,
+  onUpdated,
   onInvite,
   onCreate,
   onRemove,
 }: {
   members: Member[];
+  workspace: Workspace;
   owner: boolean;
-  workspaceId: string;
   demo: boolean;
+  onUpdated: (workspace: Workspace) => void;
   onInvite: () => void;
   onCreate: () => void;
   onRemove: (id: string) => Promise<void>;
@@ -70,7 +239,7 @@ export function TeamPanel({
   const [cancelling, setCancelling] = useState<string | null>(null);
   const { data: invites = [], mutate: refreshInvites } = useSWR<
     PendingInvite[]
-  >(demo || !owner ? null : `/workspaces/${workspaceId}/invitations`, api);
+  >(demo || !owner ? null : `/workspaces/${workspace.id}/invitations`, api);
   return (
     <>
       <div className="page-heading">
@@ -87,6 +256,13 @@ export function TeamPanel({
           </Button>
         )}
       </div>
+      {owner && (
+        <WorkspaceForm
+          workspace={workspace}
+          demo={demo}
+          onUpdated={onUpdated}
+        />
+      )}
       <div className="panel-card">
         <div className="panel-card-header">
           <div>
@@ -191,7 +367,7 @@ export function TeamPanel({
                       setCancelling(invite.id);
                       try {
                         await api(
-                          `/workspaces/${workspaceId}/invitations/${invite.id}`,
+                          `/workspaces/${workspace.id}/invitations/${invite.id}`,
                           { method: "DELETE" },
                         );
                         await refreshInvites();

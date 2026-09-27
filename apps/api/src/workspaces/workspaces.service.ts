@@ -1,3 +1,4 @@
+import { randomUUID } from "node:crypto";
 import {
   BadRequestException,
   ConflictException,
@@ -7,13 +8,19 @@ import {
   NotFoundException,
 } from "@nestjs/common";
 import type { Prisma } from "@clipstage/database";
-import { inviteSchema } from "@clipstage/contracts";
+import {
+  completeLogoSchema,
+  inviteSchema,
+  logoUploadSchema,
+  type Role,
+} from "@clipstage/contracts";
 import { z } from "zod";
 import { Database } from "../common/database";
 import { hashToken, randomToken } from "../common/crypto";
 import { parse } from "../common/validation";
 import { ENV, type Env } from "../config";
 import type { Actor } from "../auth/auth.types";
+import { StorageService } from "../clips/storage.service";
 
 const INVITE_WINDOW = 7 * 86400000;
 
@@ -56,6 +63,7 @@ export class WorkspacesService {
   constructor(
     @Inject(Database) private readonly db: Database,
     @Inject(ENV) private readonly env: Env,
+    @Inject(StorageService) private readonly storage: StorageService,
   ) {}
   async access(actor: Actor, workspaceId: string, ownerOnly = false) {
     if (actor.kind === "device" && actor.workspaceId !== workspaceId)
@@ -68,12 +76,94 @@ export class WorkspacesService {
       throw new ForbiddenException("Only the workspace owner can do this");
     return membership;
   }
+  async present(
+    workspace: { id: string; name: string; logoKey: string | null },
+    role: Role,
+  ) {
+    return {
+      id: workspace.id,
+      name: workspace.name,
+      role,
+      logoUrl: workspace.logoKey
+        ? await this.storage.read(workspace.logoKey)
+        : null,
+    };
+  }
   async create(userId: string, name: string) {
     const workspace = await this.db.workspace.create({
       data: { name, members: { create: { userId, role: "OWNER" } } },
-      select: { id: true, name: true },
+      select: { id: true, name: true, logoKey: true },
     });
-    return { ...workspace, role: "OWNER" as const };
+    return this.present(workspace, "OWNER");
+  }
+  async rename(actor: Actor, workspaceId: string, name: string) {
+    await this.access(actor, workspaceId, true);
+    const workspace = await this.db.workspace.update({
+      where: { id: workspaceId },
+      data: { name },
+      select: { id: true, name: true, logoKey: true },
+    });
+    return this.present(workspace, "OWNER");
+  }
+  async beginLogo(actor: Actor, workspaceId: string, body: unknown) {
+    await this.access(actor, workspaceId, true);
+    const input = parse(logoUploadSchema, body);
+    const key = `logos/${workspaceId}/${randomUUID()}`;
+    const ticket = await this.storage.upload(
+      key,
+      input.mimeType,
+      input.sizeBytes,
+    );
+    return { key, ...ticket };
+  }
+  async completeLogo(actor: Actor, workspaceId: string, body: unknown) {
+    await this.access(actor, workspaceId, true);
+    const input = parse(completeLogoSchema, body);
+    this.assertLogoKey(workspaceId, input.key);
+    await this.storage.verify(input.key, input.sizeBytes, input.mimeType);
+    const current = await this.db.workspace.findUniqueOrThrow({
+      where: { id: workspaceId },
+      select: { logoKey: true },
+    });
+    const workspace = await this.db.workspace.update({
+      where: { id: workspaceId },
+      data: { logoKey: input.key },
+      select: { id: true, name: true, logoKey: true },
+    });
+    if (current.logoKey && current.logoKey !== input.key)
+      await this.discardLogo(current.logoKey);
+    return this.present(workspace, "OWNER");
+  }
+  async clearLogo(actor: Actor, workspaceId: string) {
+    await this.access(actor, workspaceId, true);
+    const current = await this.db.workspace.findUniqueOrThrow({
+      where: { id: workspaceId },
+      select: { logoKey: true },
+    });
+    const workspace = await this.db.workspace.update({
+      where: { id: workspaceId },
+      data: { logoKey: null },
+      select: { id: true, name: true, logoKey: true },
+    });
+    if (current.logoKey) await this.discardLogo(current.logoKey);
+    return this.present(workspace, "OWNER");
+  }
+  private assertLogoKey(workspaceId: string, key: string) {
+    const id = key.slice(`logos/${workspaceId}/`.length);
+    if (
+      !key.startsWith(`logos/${workspaceId}/`) ||
+      !/^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i.test(
+        id,
+      )
+    )
+      throw new BadRequestException("Logo upload is not for this workspace");
+  }
+  private async discardLogo(key: string) {
+    try {
+      await this.storage.remove(key);
+    } catch {
+      // The database already points at the logo that should be shown.
+    }
   }
   async members(actor: Actor, workspaceId: string) {
     await this.access(actor, workspaceId);

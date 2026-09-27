@@ -86,6 +86,18 @@ test("team and integration panels are honest about demo and upcoming providers",
     page.getByText("Invitations aren't sent from the demo.", { exact: false }),
   ).toBeVisible();
   await page.getByRole("button", { name: "Close dialog" }).click();
+  await page.getByLabel("Workspace name").fill("Morgan studio");
+  await page.getByLabel("Workspace logo").setInputFiles({
+    name: "logo.png",
+    mimeType: "image/png",
+    buffer: Buffer.from(
+      "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mP8z8BQDwAEhQGAhKmMIQAAAABJRU5ErkJggg==",
+      "base64",
+    ),
+  });
+  await page.getByRole("button", { name: "Save workspace" }).click();
+  await expect(page.locator("#workspace")).toContainText("Morgan studio");
+  await expect(page.locator(".sidebar .workspace-icon img")).toBeVisible();
   await page.getByRole("button", { name: "Account settings" }).click();
   await expect(
     page.getByRole("heading", { name: "Kick", exact: true }),

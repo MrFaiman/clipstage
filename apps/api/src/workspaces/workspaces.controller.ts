@@ -5,6 +5,7 @@ import {
   Get,
   Inject,
   Param,
+  Patch,
   Post,
   Req,
 } from "@nestjs/common";
@@ -23,6 +24,37 @@ export class WorkspacesController {
       req.actor.userId,
       parse(workspaceSchema, body).name,
     );
+  }
+  @Patch("workspaces/:workspaceId") rename(
+    @Req() req: AuthRequest,
+    @Param("workspaceId") id: string,
+    @Body() body: unknown,
+  ) {
+    return this.workspaces.rename(
+      req.actor,
+      id,
+      parse(workspaceSchema, body).name,
+    );
+  }
+  @Post("workspaces/:workspaceId/logo") beginLogo(
+    @Req() req: AuthRequest,
+    @Param("workspaceId") id: string,
+    @Body() body: unknown,
+  ) {
+    return this.workspaces.beginLogo(req.actor, id, body);
+  }
+  @Post("workspaces/:workspaceId/logo/complete") completeLogo(
+    @Req() req: AuthRequest,
+    @Param("workspaceId") id: string,
+    @Body() body: unknown,
+  ) {
+    return this.workspaces.completeLogo(req.actor, id, body);
+  }
+  @Delete("workspaces/:workspaceId/logo") clearLogo(
+    @Req() req: AuthRequest,
+    @Param("workspaceId") id: string,
+  ) {
+    return this.workspaces.clearLogo(req.actor, id);
   }
   @Get("workspaces/:workspaceId/members") members(
     @Req() req: AuthRequest,

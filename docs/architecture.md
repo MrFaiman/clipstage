@@ -31,7 +31,7 @@ OBS native dock ── initiate ── Nest        │
 
 ## Domain and tenancy
 
-A `User` can own multiple `OAuthAccount` identities and belong to multiple `Workspace`s via `Membership`. A workspace has one owner at creation; there is no owner-transfer workflow yet. Members with `EDITOR` access can read, upload, assign, update briefs/trim decisions, and send clips for review. Only owners invite/remove editors, manage OBS devices, or approve clips.
+A `User` can own multiple `OAuthAccount` identities and belong to multiple `Workspace`s via `Membership`. A workspace has one owner at creation; there is no owner-transfer workflow yet. Members with `EDITOR` access can read, upload, assign, update briefs/trim decisions, and send clips for review. Only owners invite/remove editors, manage OBS devices, rename the workspace, set its logo, or approve clips. Logo bytes live in object storage; the database stores the object key, and `/auth/me` returns a short-lived signed URL.
 
 Every clip, member, and device operation checks workspace membership. A device is additionally restricted to its workspace and can finalize only clips it initiated. A browser uploader can finalize its own uploads. DTOs never return object keys, token hashes, encrypted provider credentials, or raw device tokens except the one-time device-creation response.
 

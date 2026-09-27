@@ -65,6 +65,24 @@ export type UpdateClip = z.infer<typeof updateClipSchema>;
 export const workspaceSchema = z
   .object({ name: z.string().trim().min(2).max(60) })
   .strict();
+export const MAX_LOGO_BYTES = 2 * 1024 * 1024;
+export const LOGO_TYPES = ["image/jpeg", "image/png", "image/webp"] as const;
+export const logoUploadSchema = z
+  .object({
+    mimeType: z.enum(LOGO_TYPES),
+    sizeBytes: z.number().int().positive().max(MAX_LOGO_BYTES),
+  })
+  .strict();
+export const completeLogoSchema = logoUploadSchema
+  .extend({ key: z.string().min(1).max(512) })
+  .strict();
+export type LogoUpload = z.infer<typeof logoUploadSchema>;
+export interface LogoTicket {
+  key: string;
+  uploadUrl: string;
+  headers: Record<string, string>;
+  expiresAt: string;
+}
 export const deviceSchema = z
   .object({ name: z.string().trim().min(2).max(60) })
   .strict();
@@ -91,6 +109,7 @@ export interface Workspace {
   id: string;
   name: string;
   role: Role;
+  logoUrl: string | null;
 }
 export interface Connection {
   id: string;

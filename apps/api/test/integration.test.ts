@@ -5,8 +5,10 @@ import { DeleteObjectCommand, S3Client } from "@aws-sdk/client-s3";
 import type {
   Clip,
   ClipDetail,
+  LogoTicket,
   UploadTicket,
   Viewer,
+  Workspace,
 } from "@clipstage/contracts";
 import { hashToken, randomToken } from "../src/common/crypto";
 import { claimInvites } from "../src/workspaces/workspaces.service";
@@ -134,6 +136,13 @@ integration("real API + PostgreSQL + S3", () => {
         select: { storageKey: true },
       });
       storageKeys.push(...pending.map((clip) => clip.storageKey));
+      const logos = await db.workspace.findMany({
+        where: { id: { in: [workspaceId, otherWorkspaceId] } },
+        select: { logoKey: true },
+      });
+      storageKeys.push(
+        ...logos.flatMap((logo) => (logo.logoKey ? [logo.logoKey] : [])),
+      );
       await Promise.all(
         [...new Set(storageKeys)].map((Key) =>
           s3.send(new DeleteObjectCommand({ Bucket: Bun.env.S3_BUCKET, Key })),
@@ -186,6 +195,83 @@ integration("real API + PostgreSQL + S3", () => {
         )
       ).status,
     ).toBe(400);
+  });
+  test("owners rename a workspace and replace its logo", async () => {
+    expect(
+      (
+        await request(`/workspaces/${workspaceId}`, editorToken, "PATCH", {
+          name: "Editor rename",
+        })
+      ).status,
+    ).toBe(403);
+    expect(
+      (
+        await request(`/workspaces/${workspaceId}/logo`, ownerToken, "POST", {
+          mimeType: "image/svg+xml",
+          sizeBytes: 32,
+        })
+      ).status,
+    ).toBe(400);
+    const renamed = await request(
+      `/workspaces/${workspaceId}`,
+      ownerToken,
+      "PATCH",
+      { name: "Renamed studio" },
+    );
+    expect(renamed.status).toBe(200);
+    expect(((await renamed.json()) as Workspace).name).toBe("Renamed studio");
+    const png = Buffer.from(
+      "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mP8z8BQDwAEhQGAhKmMIQAAAABJRU5ErkJggg==",
+      "base64",
+    );
+    const initiated = await request(
+      `/workspaces/${workspaceId}/logo`,
+      ownerToken,
+      "POST",
+      { mimeType: "image/png", sizeBytes: png.byteLength },
+    );
+    expect(initiated.status).toBe(201);
+    const ticket = (await initiated.json()) as LogoTicket;
+    storageKeys.push(ticket.key);
+    expect("logoKey" in ticket).toBe(false);
+    const uploaded = await fetch(ticket.uploadUrl, {
+      method: "PUT",
+      headers: ticket.headers,
+      body: png,
+    });
+    expect(uploaded.status).toBe(200);
+    const completed = await request(
+      `/workspaces/${workspaceId}/logo/complete`,
+      ownerToken,
+      "POST",
+      {
+        key: ticket.key,
+        mimeType: "image/png",
+        sizeBytes: png.byteLength,
+      },
+    );
+    expect(completed.status).toBe(201);
+    const withLogo = (await completed.json()) as Workspace;
+    expect(withLogo.logoUrl).toBeTruthy();
+    expect("logoKey" in withLogo).toBe(false);
+    const image = await fetch(withLogo.logoUrl!);
+    expect(image.status).toBe(200);
+    expect((await image.arrayBuffer()).byteLength).toBe(png.byteLength);
+    const me = (await (await request("/auth/me", ownerToken)).json()) as Viewer;
+    expect(me.workspaces.find((item) => item.id === workspaceId)).toMatchObject(
+      { name: "Renamed studio", logoUrl: expect.any(String) },
+    );
+    const cleared = await request(
+      `/workspaces/${workspaceId}/logo`,
+      ownerToken,
+      "DELETE",
+    );
+    expect(cleared.status).toBe(200);
+    expect(((await cleared.json()) as Workspace).logoUrl).toBeNull();
+    expect(
+      (await request(`/workspaces/${workspaceId}/logo`, editorToken, "DELETE"))
+        .status,
+    ).toBe(403);
   });
   test("upload, immutable retry, scoped device, verification, editing, and approval", async () => {
     const response = await request(
