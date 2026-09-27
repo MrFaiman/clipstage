@@ -10,6 +10,9 @@ import { randomUUID } from "node:crypto";
 import { z } from "zod";
 import {
   canSetStatus,
+  projectTrim,
+  trimSchema,
+  type ClipProject,
   type Clip,
   type CreateUpload,
   type UpdateClip,
@@ -30,7 +33,9 @@ const cursorSchema = z.object({
   createdAt: z.string().datetime(),
   id: z.string().cuid(),
 });
-function serialize(clip: StoredClip): Clip {
+function serialize(
+  clip: Omit<StoredClip, "project"> & { project?: StoredClip["project"] },
+): Clip {
   return {
     id: clip.id,
     title: clip.title,
@@ -41,6 +46,9 @@ function serialize(clip: StoredClip): Clip {
     mimeType: clip.mimeType,
     sizeBytes: Number(clip.sizeBytes),
     durationSeconds: clip.durationSeconds,
+    ...(clip.project !== undefined
+      ? { project: clip.project as ClipProject | null }
+      : {}),
     trim:
       clip.trimStart !== null && clip.trimEnd !== null
         ? { start: clip.trimStart, end: clip.trimEnd }
@@ -86,6 +94,7 @@ export class ClipsService {
           : {}),
       },
       include,
+      omit: { project: true }, // Large timelines are fetched on demand, not on every library poll.
       orderBy: [{ createdAt: "desc" }, { id: "desc" }],
       take: 31,
     });
@@ -210,10 +219,12 @@ export class ClipsService {
         throw new ConflictException(
           "Move this approved clip back to In progress before changing it",
         );
-      if (
-        input.trim &&
-        input.trim.end > (current.durationSeconds ?? 21600) + 0.1
-      )
+      const trim = input.project ? projectTrim(input.project) : input.trim;
+      if (trim && !trimSchema.safeParse(trim).success)
+        throw new BadRequestException(
+          "The first video layer must have a valid source segment",
+        );
+      if (trim && trim.end > (current.durationSeconds ?? 21600) + 0.1)
         throw new BadRequestException("Trim exceeds the source duration");
       if (input.assigneeId) {
         const assignee = await tx.membership.findUnique({
@@ -231,10 +242,15 @@ export class ClipsService {
           brief: input.brief,
           status: input.status,
           assigneeId: input.assigneeId,
-          ...(input.trim !== undefined
+          ...(trim !== undefined
             ? {
-                trimStart: input.trim?.start ?? null,
-                trimEnd: input.trim?.end ?? null,
+                trimStart: trim?.start ?? null,
+                trimEnd: trim?.end ?? null,
+              }
+            : {}),
+          ...(input.project !== undefined
+            ? {
+                project: input.project === null ? Prisma.DbNull : input.project,
               }
             : {}),
           version: { increment: 1 },

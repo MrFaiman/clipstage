@@ -13,7 +13,8 @@ const app = await NestFactory.create(AppModule.register(env), {
 });
 app.setGlobalPrefix("v1");
 app.use(helmet());
-app.use(json({ limit: "32kb" }));
+// Timeline documents are bounded separately to 1 MiB by the shared schema.
+app.use(json({ limit: "2mb" }));
 app.use(cookieParser());
 app.use(
   (
