@@ -33,6 +33,13 @@ const cursorSchema = z.object({
   createdAt: z.string().datetime(),
   id: z.string().cuid(),
 });
+function sameTrim(
+  a: { start: number; end: number } | null | undefined,
+  b: { start: number; end: number } | null | undefined,
+) {
+  if (!a || !b) return !a && !b;
+  return Math.abs(a.start - b.start) < 0.001 && Math.abs(a.end - b.end) < 0.001;
+}
 function serialize(
   clip: Omit<StoredClip, "project"> & { project?: StoredClip["project"] },
 ): Clip {
@@ -220,6 +227,23 @@ export class ClipsService {
           "Move this approved clip back to In progress before changing it",
         );
       const trim = input.project ? projectTrim(input.project) : input.trim;
+      if (
+        input.project &&
+        input.trim !== undefined &&
+        !sameTrim(trim, input.trim)
+      )
+        throw new BadRequestException(
+          "Trim must match the project's first video layer. Change the cut in the timeline.",
+        );
+      if (
+        input.project === undefined &&
+        input.trim !== undefined &&
+        current.project !== null &&
+        !sameTrim(input.trim, projectTrim(current.project as ClipProject))
+      )
+        throw new ConflictException(
+          "This clip has a saved timeline. Change the cut in the timeline, or clear the project.",
+        );
       if (trim && !trimSchema.safeParse(trim).success)
         throw new BadRequestException(
           "The first video layer must have a valid source segment",

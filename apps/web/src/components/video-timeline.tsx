@@ -1,7 +1,7 @@
 "use client";
 
 import { useEffect, useState } from "react";
-import VideoFlow, { type VideoJSON } from "@videoflow/core";
+import VideoFlow, { type LayerJSON, type VideoJSON } from "@videoflow/core";
 import { VideoEditor } from "@videoflow/react-video-editor";
 import "@videoflow/react-video-editor/style.css";
 import {
@@ -68,6 +68,25 @@ function probeSource(source: string, signal: AbortSignal) {
   );
 }
 
+function fitSource(project: VideoJSON, source: string, duration: number) {
+  function map(layers: LayerJSON[]): LayerJSON[] {
+    return layers.map((layer) => {
+      const children = layer.children && map(layer.children);
+      if (layer.settings.source !== source)
+        return children ? { ...layer, children } : layer;
+      const start = layer.settings.sourceStart ?? 0;
+      if (start + layer.settings.sourceDuration > duration + 0.1)
+        throw new Error("The saved cut exceeds the playable source duration.");
+      return {
+        ...layer,
+        settings: { ...layer.settings, mediaDuration: duration },
+        ...(children ? { children } : {}),
+      };
+    });
+  }
+  return { ...project, layers: map(project.layers) };
+}
+
 export function VideoTimeline({
   clip,
   playback,
@@ -86,9 +105,13 @@ export function VideoTimeline({
   useEffect(() => {
     const controller = new AbortController();
     async function load() {
-      if (clip.project)
-        return replaceProjectSource(clip.project, CLIP_SOURCE, playback);
       const media = await probeSource(playback, controller.signal);
+      if (clip.project)
+        return fitSource(
+          replaceProjectSource(clip.project, CLIP_SOURCE, playback),
+          playback,
+          media.duration,
+        );
       const start = clip.trim?.start ?? 0;
       const end = clip.trim?.end ?? media.duration;
       if (start >= end || end > media.duration + 0.1)

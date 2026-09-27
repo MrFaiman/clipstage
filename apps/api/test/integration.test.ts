@@ -444,6 +444,16 @@ integration("real API + PostgreSQL + S3", () => {
         { name: "Titles", enabled: true },
       ],
     };
+    expect(
+      (
+        await request(
+          `/workspaces/${workspaceId}/clips/${clip.id}`,
+          editorToken,
+          "PATCH",
+          { version: 1, project: timeline, trim: { start: 0, end: 5 } },
+        )
+      ).status,
+    ).toBe(400);
     const edit = await request(
       `/workspaces/${workspaceId}/clips/${clip.id}`,
       editorToken,
@@ -452,7 +462,7 @@ integration("real API + PostgreSQL + S3", () => {
         version: 1,
         status: "IN_REVIEW",
         project: timeline,
-        trim: { start: 0, end: 5 }, // The project's source segment is authoritative.
+        trim: { start: 1, end: 5 },
         assigneeId: editorId,
       },
     );
@@ -468,6 +478,16 @@ integration("real API + PostgreSQL + S3", () => {
     expect(
       (await db.clip.findUniqueOrThrow({ where: { id: clip.id } })).storageKey,
     ).toBe(originalKey);
+    expect(
+      (
+        await request(
+          `/workspaces/${workspaceId}/clips/${clip.id}`,
+          editorToken,
+          "PATCH",
+          { version: 2, trim: { start: 0, end: 3 } },
+        )
+      ).status,
+    ).toBe(409);
     expect(
       (
         await request(
