@@ -1,6 +1,6 @@
 "use client";
 import { useCallback, useRef, useState } from "react";
-import useSWR from "swr";
+import useSWR, { useSWRConfig } from "swr";
 import { ArrowDownToLine, Check, Film, Loader2, Sparkles } from "lucide-react";
 import { toast } from "sonner";
 import {
@@ -103,6 +103,7 @@ function EditorForm({
 }: EditorProps & { playback: string | null; downloadUrl: string | null }) {
   // Freeze the editing snapshot. Background library refreshes must not reset a timeline
   // or advance the expected version underneath an unsaved edit.
+  const { mutate: mutateCache } = useSWRConfig();
   const [{ clip, playback }] = useState(() => ({
     clip: loadedClip,
     playback: loadedPlayback,
@@ -178,6 +179,14 @@ function EditorForm({
               project: savedProject,
             }),
           });
+      // Reopening may render the cached detail before (or instead of, when deduped)
+      // its revalidation, and the form freezes whatever it first receives.
+      if (!demo)
+        await mutateCache<ClipDetail>(
+          `/workspaces/${workspace.id}/clips/${clip.id}`,
+          (current) => current && { ...current, ...updated },
+          { revalidate: false },
+        );
       onSaved(updated);
       toast.success(
         demo
