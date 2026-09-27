@@ -2,7 +2,7 @@
 
 **Your stream's best moments, straight to your editing team.**
 
-A Kick-first, full-stack MVP: an OBS dock sends completed recordings or replay-buffer captures to private S3 storage; a shared workspace gives editors the original, a brief, and non-destructive trim/review controls.
+A Kick-first, full-stack MVP: an OBS dock sends completed recordings or replay-buffer captures to private S3 storage; a shared workspace gives editors the original, a brief, and a saved VideoFlow timeline, and non-destructive review controls. MP4 exports download locally without replacing the source or uploading a new clip.
 
 ## Stack
 
@@ -80,19 +80,27 @@ The dock controls OBS's **normal recording output**. Start/stop it independently
 
 ## What works
 
-| Feature                                                                       | Status                                            |
-| ----------------------------------------------------------------------------- | ------------------------------------------------- |
-| Kick OAuth login and multiple Kick connections                                | Implemented; requires your provider credentials   |
-| Separate workspaces, owners, editors, invites by Kick email or username       | Implemented                                       |
-| Direct browser/OBS → S3 uploads, verification, retry idempotency              | Implemented and integration-tested                |
-| Scoped, revocable, 90-day OBS credentials                                     | Implemented                                       |
-| Recording-stopped and replay-saved capture hooks                              | Native plugin source; Linux compilation verified  |
-| Responsive clip library, search, status filters, grid/list views              | Implemented; search/filter covers loaded pages    |
-| Briefs, source preview/download, editor assignment, review/approval           | Implemented                                       |
-| Non-destructive in/out points and concurrent-edit protection                  | Implemented; **does not render a new video**      |
-| Workspace updates                                                             | Five-second polling, not push notifications       |
-| Twitch / YouTube OAuth                                                        | Planned; reserved data model, visibly disabled UI |
-| Durable OBS queue, multipart uploads, processing workers, thumbnails, exports | Planned                                           |
+| Feature                                                                              | Status                                                              |
+| ------------------------------------------------------------------------------------ | ------------------------------------------------------------------- |
+| Kick OAuth login and multiple Kick connections                                       | Implemented; requires your provider credentials                     |
+| Separate workspaces, owners, editors, invites by Kick email or username              | Implemented                                                         |
+| Direct browser/OBS → S3 uploads, verification, retry idempotency                     | Implemented and integration-tested                                  |
+| Scoped, revocable, 90-day OBS credentials                                            | Implemented                                                         |
+| Recording-stopped and replay-saved capture hooks                                     | Native plugin source; Linux compilation verified                    |
+| Responsive clip library, search, status filters, grid/list views                     | Implemented; search/filter covers loaded pages                      |
+| Briefs, source preview/download, editor assignment, review/approval                  | Implemented                                                         |
+| VideoFlow timeline, saved tracks/text/trims, concurrent-edit protection              | Implemented; MP4 exports download locally, original stays unchanged |
+| Workspace updates                                                                    | Five-second polling, not push notifications                         |
+| Twitch / YouTube OAuth                                                               | Planned; reserved data model, visibly disabled UI                   |
+| Durable OBS queue, multipart uploads, processing workers, thumbnails, server exports | Planned                                                             |
+
+### VideoFlow editor
+
+The full VideoJSON timeline is stored on the clip; the first video layer also updates the legacy source trim fields. Original media references are rebound to a fresh playback URL when reopened. Extra local files dropped into VideoFlow are temporary; remove them before saving or use durable media URLs. Export uses VideoFlow's built-in browser MP4 download and never uploads or replaces the source. Browser codec support and asset CORS apply.
+
+Existing installations: run `bun run db:deploy` and `bun run db:generate` for the new nullable `Clip.project` JSON column.
+
+`@videoflow/react-video-editor` uses a tiered license: free for individuals, eligible nonprofits, and for-profit organizations with up to three employees; larger commercial organizations need a company license. Check [VideoFlow's license](https://videoflow.dev/license) before deployment. Core and renderers are Apache 2.0.
 
 ## Commands
 

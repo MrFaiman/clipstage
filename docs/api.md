@@ -146,7 +146,7 @@ Cookie: cs_session=YOUR_SESSION
 
 `version` is required. Other fields are optional; `title` is also editable. `assigneeId: null` unassigns; `trim: null` clears trim points. `start >= 0`, `end > start`, finite values only, with end bounded by the declared source duration when available. `APPROVED` requires OWNER. Reopen approved clips to EDITING before changing their content. `UPLOADING` is not an editable status.
 
-A successful edit returns the updated DTO and incremented version. **409** means reload/reconcile instead of blindly retrying. The trim is metadata, not a finished video; no render endpoint exists in this MVP.
+A successful edit returns the updated DTO and incremented version. **409** means reload/reconcile instead of blindly retrying. An optional nullable `project` contains the full VideoFlow VideoJSON (up to 1 MiB). When present, its first video layer determines the trim; a project without video layers clears the trim. Other tracks, text, effects, and keyframes are preserved. `project: null` clears the saved project. Detail and update responses include the project; library pages omit it. Store the original media as `clipstage:source`, not an expiring S3 URL or a local blob. The web editor rebinds that reference on open. MP4 exports download locally through VideoFlow; no server render/upload endpoint is called and the original source is unchanged.
 
 ## Storage setup
 

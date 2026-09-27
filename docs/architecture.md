@@ -94,7 +94,9 @@ APPROVED → EDITING (explicitly reopen before changing content)
 
 Every edit includes the version seen by the editor. Prisma updates only a matching `(id, workspaceId, version)` and increments it. A stale save returns **409**, rather than overwriting another collaborator's changes. Close/reopen the dialog to reload after a conflict. There is no automatic merge, audit history, or collaborative text editing yet.
 
-Trim points are stored in seconds. They do **not** produce an edited MP4, crop, captions, audio mix, or export. The video player plays the original source; the displayed timeline is a trim guide, **not a measured audio waveform**. Original downloads let editors use their existing desktop tools. Native MKV/some MOV/unsupported codecs may require that workflow.
+VideoFlow edits the source in a client-only timeline. The complete VideoJSON document (up to 1 MiB) is persisted in `Clip.project`, including tracks, text, effects, and trims. The first video layer's `sourceStart` and `sourceStart + sourceDuration` also populate the legacy trim fields in seconds. The API derives these fields from the project when provided. Library polls omit the project; the editing room fetches the latest document and version before initializing a stable editing snapshot.
+
+The original source is persisted as `clipstage:source` and rebound to the current signed playback URL on open, including duplicated/nested layers. Additional local dropped media has ephemeral blob URLs and cannot be saved until replaced with durable URLs or removed. MP4 export uses VideoFlow's built-in local browser download: no export is uploaded and the source object is never replaced. Browser codec support, CORS, and memory limits apply. Original downloads remain available for unsupported source formats. Server-rendered exports are still future work.
 
 The library refreshes its first page every five seconds and fetches older pages on demand. Search/status filters operate on loaded pages, and the UI labels that limitation. Older loaded pages aren't continuously refreshed. SSE/WebSocket notifications and server-side faceted search are future improvements.
 
