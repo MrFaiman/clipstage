@@ -45,7 +45,7 @@ export default function SetupPage() {
           },
           {
             title: "5. Hand it off",
-            body: "Your editor's workspace refreshes every five seconds. They can preview or download the original, update the brief, set trim points, and send it for review. Saved trim points are editing decisions, not a rendered export. The streamer gives final approval.",
+            body: "Your editor's workspace refreshes every five seconds. They can edit in VideoFlow, update the brief, and send the clip for review. The full timeline is saved with the clip. MP4 exports download locally without uploading a new clip or replacing the original. The streamer gives final approval.",
           },
         ].map((step) => (
           <section key={step.title} className="panel-card p-6">
@@ -60,8 +60,9 @@ export default function SetupPage() {
         <strong className="block text-foreground">Keep your originals.</strong>
         Upload failures can be retried while OBS remains open. The source files
         are never deleted. This preview doesn't persist its upload queue across
-        restarts, watch recording-file splits, upload in chunks, or render
-        finished edits. Full implementation notes and rollout limitations are in{" "}
+        restarts, watch recording-file splits, or upload in chunks. The editor
+        can export MP4 locally; exports do not replace the original recording.
+        Full implementation notes and rollout limitations are in{" "}
         <code>docs/architecture.md</code>.
       </div>
     </main>

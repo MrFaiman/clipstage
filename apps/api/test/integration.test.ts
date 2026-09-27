@@ -319,6 +319,45 @@ integration("real API + PostgreSQL + S3", () => {
         )
       ).status,
     ).toBe(400);
+    const originalKey = (
+      await db.clip.findUniqueOrThrow({ where: { id: clip.id } })
+    ).storageKey;
+    const timeline = {
+      name: "Persisted project",
+      width: 960,
+      height: 540,
+      fps: 30,
+      duration: 5,
+      backgroundColor: "#000",
+      layers: [
+        {
+          id: "source",
+          type: "video",
+          settings: {
+            enabled: true,
+            startTime: 0,
+            sourceStart: 1,
+            sourceDuration: 4,
+            source: "clipstage:source",
+          },
+          properties: {},
+          animations: [],
+          track: 0,
+        },
+        {
+          id: "text",
+          type: "text",
+          settings: { enabled: true, startTime: 0, sourceDuration: 4 },
+          properties: { text: "Keep the reaction", fontSize: 6 },
+          animations: [],
+          track: 1,
+        },
+      ],
+      tracks: [
+        { name: "Source", enabled: true },
+        { name: "Titles", enabled: true },
+      ],
+    };
     const edit = await request(
       `/workspaces/${workspaceId}/clips/${clip.id}`,
       editorToken,
@@ -326,12 +365,23 @@ integration("real API + PostgreSQL + S3", () => {
       {
         version: 1,
         status: "IN_REVIEW",
-        trim: { start: 0, end: 5 },
+        project: timeline,
+        trim: { start: 0, end: 5 }, // The project's source segment is authoritative.
         assigneeId: editorId,
       },
     );
     expect(edit.status).toBe(200);
-    expect(((await edit.json()) as Clip).version).toBe(2);
+    const edited = (await edit.json()) as Clip;
+    expect(edited.version).toBe(2);
+    expect(edited.trim).toEqual({ start: 1, end: 5 });
+    expect(edited.project).toEqual(timeline);
+    const reopened = (await (
+      await request(`/workspaces/${workspaceId}/clips/${clip.id}`, editorToken)
+    ).json()) as ClipDetail;
+    expect(reopened.project).toEqual(timeline);
+    expect(
+      (await db.clip.findUniqueOrThrow({ where: { id: clip.id } })).storageKey,
+    ).toBe(originalKey);
     expect(
       (
         await request(
@@ -458,10 +508,10 @@ integration("real API + PostgreSQL + S3", () => {
         await page
           .getByRole("button", { name: "Open Browser integration capture" })
           .click();
-        await expectBrowser(page.locator("video")).toHaveJSProperty(
-          "readyState",
-          4,
-        );
+        await expectBrowser(page.locator("vf-editor")).toBeVisible();
+        await page
+          .locator("vf-titlebar-name input")
+          .fill("A persistent browser timeline");
         await page
           .getByLabel("The streamer's brief")
           .fill("Saved by the real editor UI.");
@@ -472,6 +522,18 @@ integration("real API + PostgreSQL + S3", () => {
         });
         expect(stored.brief).toBe("Saved by the real editor UI.");
         expect(stored.status).toBe("INBOX");
+        expect(stored.project).toMatchObject({
+          name: "A persistent browser timeline",
+        });
+        await page
+          .getByRole("button", { name: "Open Browser integration capture" })
+          .click();
+        await expectBrowser(page.locator("vf-titlebar-name input")).toHaveValue(
+          "A persistent browser timeline",
+        );
+        await expectBrowser(
+          page.getByLabel("The streamer's brief"),
+        ).toHaveValue("Saved by the real editor UI.");
       } finally {
         await browser.close();
         web.kill();

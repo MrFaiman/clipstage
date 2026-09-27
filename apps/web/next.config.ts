@@ -1,6 +1,12 @@
 import type { NextConfig } from "next";
 const config: NextConfig = {
-  transpilePackages: ["@clipstage/contracts"],
+  transpilePackages: [
+    "@clipstage/contracts",
+    "@videoflow/core",
+    "@videoflow/react-video-editor",
+    "@videoflow/renderer-dom",
+    "@videoflow/renderer-browser",
+  ],
   poweredByHeader: false,
   async headers() {
     return [

@@ -29,14 +29,13 @@ test("library filters, search, views, and non-destructive editing", async ({
     .getByRole("button", { name: "Open One HP. A whole lot of confidence." })
     .click();
   await expect(page.getByRole("dialog")).toBeVisible();
-  await expect(page.locator("video")).toHaveJSProperty("readyState", 4);
+  await expect(page.locator("vf-editor")).toBeVisible();
+  await page.locator("vf-titlebar-name input").fill("Saved timeline project");
   await page
     .getByLabel("The streamer's brief")
     .fill("Start at the clutch. Keep the reaction.");
   await page.getByLabel("Workflow status").selectOption("EDITING");
   await page.getByLabel("Assigned editor").selectOption("demo-editor-1");
-  await page.getByLabel("In point (seconds)").fill("1");
-  await page.getByLabel("Out point (seconds)").fill("5");
   await page.getByRole("button", { name: "Save changes" }).click();
   await expect(page.getByRole("dialog")).not.toBeVisible();
   await page
@@ -45,8 +44,12 @@ test("library filters, search, views, and non-destructive editing", async ({
   await expect(page.getByLabel("The streamer's brief")).toHaveValue(
     "Start at the clutch. Keep the reaction.",
   );
-  await expect(page.getByLabel("In point (seconds)")).toHaveValue("1");
-  await expect(page.getByLabel("Out point (seconds)")).toHaveValue("5");
+  await expect(page.getByLabel("Workflow status")).toHaveValue("EDITING");
+  await expect(page.getByLabel("Assigned editor")).toHaveValue("demo-editor-1");
+  await expect(page.locator("vf-editor")).toBeVisible();
+  await expect(page.locator("vf-titlebar-name input")).toHaveValue(
+    "Saved timeline project",
+  );
   expect(errors).toEqual([]);
 });
 
@@ -66,7 +69,7 @@ test("a manual demo upload stays local and can be previewed", async ({
   await expect(page.getByRole("dialog")).not.toBeVisible();
   await expect(page.locator(".clip-card")).toHaveCount(7);
   await page.getByRole("button", { name: "Open My local recording" }).click();
-  await expect(page.locator("video")).toHaveAttribute("src", /^blob:/);
+  await expect(page.locator("vf-editor")).toBeVisible();
 });
 
 test("team and integration panels are honest about demo and upcoming providers", async ({
