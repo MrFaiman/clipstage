@@ -1,0 +1,36 @@
+server {
+    listen 80;
+    server_name ${PUBLIC_HOST};
+    return 301 https://$host$request_uri;
+}
+
+server {
+    listen 443 ssl;
+    server_name ${PUBLIC_HOST};
+
+    ssl_certificate /etc/nginx/tls/fullchain.pem;
+    ssl_certificate_key /etc/nginx/tls/privkey.pem;
+    ssl_protocols TLSv1.2 TLSv1.3;
+
+    # Keep the /v1 prefix: Nest registers its routes under /v1.
+    location = /v1 {
+        proxy_pass http://api:4000;
+        proxy_set_header Host $host;
+        proxy_set_header X-Forwarded-Proto $scheme;
+        proxy_set_header X-Real-IP $remote_addr;
+    }
+    location /v1/ {
+        client_max_body_size 2m; # Timeline JSON; video uploads go directly to S3.
+        proxy_pass http://api:4000;
+        proxy_set_header Host $host;
+        proxy_set_header X-Forwarded-Proto $scheme;
+        proxy_set_header X-Real-IP $remote_addr;
+    }
+
+    location / {
+        proxy_pass http://web:3000;
+        proxy_set_header Host $host;
+        proxy_set_header X-Forwarded-Proto $scheme;
+        proxy_set_header X-Real-IP $remote_addr;
+    }
+}

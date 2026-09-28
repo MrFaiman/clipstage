@@ -155,3 +155,19 @@ docs/                 Architecture, API contract, rollout notes
 This is an MVP foundation, **not a production-hardened video platform**. Read **[the architecture and rollout checklist](docs/architecture.md)** and **[API contract](docs/api.md)**.
 
 Important: the browser app and API must share a **hostname** because sessions are host-only cookies consumed by both Next's server loader and Nest. In production, terminate TLS at one origin and route `/v1/`* to Nest, everything else to Next. Set `WEB_ORIGIN` and `API_ORIGIN` to that same HTTPS origin. `API_INTERNAL_URL` may point from Next directly to the internal Nest service. Do not expose the database or local storage admin credentials.
+
+### Self-hosted app tier
+
+`compose.production.yaml` builds Next and Nest and puts Nginx in front of them. It does **not** run PostgreSQL or S3: provision an external database and a private bucket first. Configure bucket CORS for your HTTPS origin and make sure presigned S3 URLs are reachable by browsers and OBS. Do not use the local SeaweedFS credentials in production.
+
+1. Copy `.env.production.example` to `.env.production` and supply your domain, database, Kick and S3 credentials, and a new encryption key (`openssl rand -hex 32`). Register `https://<PUBLIC_HOST>/v1/auth/kick/callback` with Kick. Point the domain's DNS at the server.
+2. Place a valid certificate and key for that domain at `infra/tls/fullchain.pem` and `infra/tls/privkey.pem` (this directory is git-ignored). Renew them outside Compose and reload Nginx after renewal. Open ports 80 and 443; no app or database ports are published.
+3. From the repository root, run:
+
+```sh
+docker compose --env-file .env.production -f compose.production.yaml build
+docker compose --env-file .env.production -f compose.production.yaml run --rm --no-deps api sh -c 'cd /app/packages/database && bunx prisma migrate deploy'
+docker compose --env-file .env.production -f compose.production.yaml up -d
+```
+
+Visit `https://<PUBLIC_HOST>/v1/health` to verify the API. Rebuild the web image after changing `PUBLIC_HOST`: the browser API URL is compiled into Next. Review the rollout checklist in `docs/architecture.md`; this Compose file is a starting point, not a complete hardened deployment.

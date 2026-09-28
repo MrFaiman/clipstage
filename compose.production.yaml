@@ -1,0 +1,43 @@
+# Self-hosted app tier only. Use an externally provisioned PostgreSQL database and
+# private S3 bucket; do not combine this with the local development compose file.
+services:
+  api:
+    build:
+      context: .
+      dockerfile: apps/api/Dockerfile
+    env_file: .env.production
+    environment:
+      NODE_ENV: production
+      PORT: "4000"
+      WEB_ORIGIN: https://${PUBLIC_HOST:?Set PUBLIC_HOST in .env.production}
+      API_ORIGIN: https://${PUBLIC_HOST:?Set PUBLIC_HOST in .env.production}
+      KICK_REDIRECT_URI: https://${PUBLIC_HOST:?Set PUBLIC_HOST in .env.production}/v1/auth/kick/callback
+    restart: unless-stopped
+
+  web:
+    build:
+      context: .
+      dockerfile: apps/web/Dockerfile
+      args:
+        NEXT_PUBLIC_API_URL: https://${PUBLIC_HOST:?Set PUBLIC_HOST in .env.production}/v1
+        NEXT_PUBLIC_DEMO_MODE: "false"
+    environment:
+      API_INTERNAL_URL: http://api:4000/v1
+    depends_on:
+      - api
+    restart: unless-stopped
+
+  nginx:
+    image: nginx:1.28-alpine
+    environment:
+      PUBLIC_HOST: ${PUBLIC_HOST:?Set PUBLIC_HOST in .env.production}
+    ports:
+      - "80:80"
+      - "443:443"
+    volumes:
+      - ./infra/nginx/production.conf.template:/etc/nginx/templates/default.conf.template:ro
+      - ./infra/tls:/etc/nginx/tls:ro
+    depends_on:
+      - api
+      - web
+    restart: unless-stopped
