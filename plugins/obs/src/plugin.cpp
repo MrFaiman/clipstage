@@ -6,9 +6,11 @@
 #include <QCheckBox>
 #include <QClipboard>
 #include <QDateTime>
+#include <QDir>
 #include <QFile>
 #include <QFileDialog>
 #include <QFileInfo>
+#include <QJsonArray>
 #include <QJsonDocument>
 #include <QJsonObject>
 #include <QLabel>
@@ -20,6 +22,9 @@
 #include <QPointer>
 #include <QPushButton>
 #include <QQueue>
+#include <QSaveFile>
+#include <QStandardPaths>
+#include <QTimer>
 #include <QRegularExpression>
 #include <QTextEdit>
 #include <QUrl>
@@ -57,6 +62,7 @@ struct Job {
     QString clipId;
     qint64 size = 0;
     qint64 modified = 0;
+    int attempts = 0;
     Connection connection;
 };
 
@@ -136,12 +142,13 @@ public:
         layout->addWidget(retry);
         layout->addWidget(discard);
         connect(retry, &QPushButton::clicked, this, [this] {
-            if (active && failed) { failed = false; updateControls(); initiate(); }
+            if (active && failed && connection.ready()) { active->attempts = 0; failed = false; updateControls(); initiate(); }
         });
         connect(discard, &QPushButton::clicked, this, [this] {
-            if (active && failed) { active.reset(); failed = false; startNext(); }
+            if (active && failed) { active.reset(); failed = false; persistQueue(); startNext(); }
         });
         layout->addStretch();
+        restoreQueue();
         updateControls();
     }
 
@@ -164,6 +171,9 @@ private:
     QQueue<Job> jobs;
     std::optional<Job> active;
     bool failed = false;
+    int retryGeneration = 0;
+    QJsonObject multipartTicket;
+    int nextPart = 1;
     QLineEdit *title = nullptr;
     QTextEdit *brief = nullptr;
     QCheckBox *autoUpload = nullptr;
@@ -175,9 +185,88 @@ private:
     QPushButton *retry = nullptr;
     QPushButton *discard = nullptr;
 
+    QString queuePath() const
+    {
+        return QStandardPaths::writableLocation(QStandardPaths::AppDataLocation) + "/clipstage-queue.json";
+    }
+    QJsonObject encodeJob(const Job &job) const
+    {
+        return {{"path", job.path}, {"title", job.title}, {"brief", job.brief},
+                {"mimeType", job.mimeType}, {"clientId", job.clientId},
+                {"size", static_cast<double>(job.size)}, {"modified", static_cast<double>(job.modified)},
+                {"apiUrl", job.connection.apiUrl}, {"workspaceId", job.connection.workspaceId}};
+    }
+    bool persistQueue()
+    {
+        const auto path = queuePath();
+        if (!QDir().mkpath(QFileInfo(path).absolutePath())) {
+            status->setText("Cannot save the upload queue. Check OBS profile permissions.");
+            return false;
+        }
+        QJsonArray entries;
+        if (active) entries.append(encodeJob(*active));
+        for (const auto &job : jobs) entries.append(encodeJob(job));
+        QSaveFile file(path);
+        if (!file.open(QIODevice::WriteOnly)) {
+            status->setText("Cannot save the upload queue. Check OBS profile permissions.");
+            return false;
+        }
+        file.setPermissions(QFileDevice::ReadOwner | QFileDevice::WriteOwner);
+        const auto data = QJsonDocument(entries).toJson(QJsonDocument::Compact);
+        if (file.write(data) != data.size() || !file.commit()) {
+            status->setText("Cannot save the upload queue. Check OBS profile permissions.");
+            return false;
+        }
+        return true;
+    }
+    void restoreQueue()
+    {
+        QFile file(queuePath());
+        if (!file.exists()) return;
+        if (!file.open(QIODevice::ReadOnly) || file.size() > 200000) {
+            status->setText("Saved queue cannot be read. Original files remain on disk.");
+            return;
+        }
+        const auto document = QJsonDocument::fromJson(file.readAll());
+        if (!document.isArray() || document.array().size() > MaxQueuedJobs + 1) {
+            status->setText("Saved queue is invalid. Original files remain on disk.");
+            return;
+        }
+        QQueue<Job> restored;
+        for (const auto &value : document.array()) {
+            const auto item = value.toObject();
+            Job job;
+            job.path = item["path"].toString();
+            job.title = item["title"].toString();
+            job.brief = item["brief"].toString();
+            job.mimeType = item["mimeType"].toString();
+            job.clientId = item["clientId"].toString();
+            job.size = static_cast<qint64>(item["size"].toDouble());
+            job.modified = static_cast<qint64>(item["modified"].toDouble());
+            job.connection.apiUrl = item["apiUrl"].toString();
+            job.connection.workspaceId = item["workspaceId"].toString();
+            if (!QFileInfo(job.path).isAbsolute() || job.clientId.isEmpty() ||
+                job.size <= 0 || job.size > MaxBytes || job.modified <= 0 ||
+                mimeFor(QFileInfo(job.path).suffix().toLower()) != job.mimeType ||
+                !safeTransport(QUrl(job.connection.apiUrl)) || job.connection.workspaceId.isEmpty() ||
+                (!restored.isEmpty() && (job.connection.apiUrl != restored.head().connection.apiUrl ||
+                                         job.connection.workspaceId != restored.head().connection.workspaceId))) {
+                status->setText("Saved queue is invalid. Original files remain on disk.");
+                return;
+            }
+            restored.enqueue(std::move(job));
+        }
+        if (!restored.isEmpty()) {
+            active = restored.dequeue();
+            jobs = std::move(restored);
+            failed = true; // No credential is persisted: require pairing before resuming.
+            status->setText("Uploads restored. Paste the original workspace connection to resume.");
+        }
+    }
+
     void pair()
     {
-        if (active || !jobs.isEmpty()) {
+        if (connection.ready() && (active || !jobs.isEmpty())) {
             status->setText("Finish or skip queued uploads before changing the connection.");
             return;
         }
@@ -194,10 +283,17 @@ private:
             status->setText("Invalid connection. Copy the complete JSON from the app. HTTPS is required except on localhost.");
             return;
         }
+        if (active && (active->connection.apiUrl != next.apiUrl || active->connection.workspaceId != next.workspaceId)) {
+            status->setText("The saved queue belongs to another workspace/API. Pair with its original connection or skip the jobs.");
+            return;
+        }
         connection = std::move(next);
+        if (active) active->connection.token = connection.token;
+        for (auto &job : jobs) job.connection.token = connection.token;
         connectionLabel->setText("Workspace: " + connection.workspaceId + " (credential not yet verified)");
-        status->setText("Connection loaded into memory. It is verified on your first upload. Clear your clipboard; paste again after restarting OBS.");
-        updateControls();
+        status->setText("Connection loaded into memory. Clear your clipboard; paste again after restarting OBS.");
+        if (active && failed) { failed = false; initiate(); }
+        else startNext();
     }
 
     void enqueue(const QString &path)
@@ -222,6 +318,7 @@ private:
         job.modified = file.lastModified().toMSecsSinceEpoch();
         job.connection = connection;
         jobs.enqueue(std::move(job));
+        if (!persistQueue()) { jobs.removeLast(); return; }
         startNext();
     }
 
@@ -229,8 +326,9 @@ private:
     {
         if (!active && !jobs.isEmpty()) {
             active = jobs.dequeue();
-            failed = false;
-            initiate();
+            if (!persistQueue()) { failed = true; updateControls(); return; }
+            failed = !connection.ready();
+            if (!failed) initiate();
         }
         updateControls();
     }
@@ -240,7 +338,7 @@ private:
         record->setEnabled(connection.ready());
         replay->setEnabled(connection.ready() && obs_frontend_replay_buffer_active());
         replay->setToolTip("Start the replay buffer in OBS before saving a replay clip.");
-        retry->setVisible(active.has_value() && failed);
+        retry->setVisible(active.has_value() && failed && connection.ready());
         discard->setVisible(active.has_value() && failed);
         queueLabel->setText(QString("%1 queued · %2").arg(jobs.size()).arg(active ? (failed ? "Paused after an error" : "Upload in progress") : "Ready"));
     }
@@ -249,6 +347,23 @@ private:
         failed = true;
         status->setText(reason + " Your local recording is safe. Retry or skip this upload.");
         updateControls();
+    }
+    void transientFailure(const QString &reason)
+    {
+        if (!active) return;
+        if (++active->attempts > 5) { fail(reason); return; }
+        const auto id = active->clientId;
+        const int generation = retryGeneration;
+        const int delay = (1 << active->attempts) * 1000;
+        failed = true;
+        status->setText(reason + QString(" Retrying in %1 seconds; your original is safe.").arg(delay / 1000));
+        updateControls();
+        QTimer::singleShot(delay, this, [this, id, generation] {
+            if (active && active->clientId == id && failed && connection.ready() && retryGeneration == generation) {
+                failed = false;
+                initiate(); // Reuse the same UUID; 412 on an earlier successful PUT is safe.
+            }
+        });
     }
     QNetworkRequest request(const QUrl &url)
     {
@@ -273,7 +388,9 @@ private:
             const auto payload = reply->read(1024 * 1024);
             reply->deleteLater();
             if (networkError != QNetworkReply::NoError || code < 200 || code >= 300) {
-                fail(QString("API request failed (HTTP %1). Check your API URL, credential, and connection.").arg(code));
+                const auto reason = QString("API request failed (HTTP %1).").arg(code);
+                if (code == 0 || code == 408 || code == 429 || code >= 500) transientFailure(reason);
+                else fail(reason + " Check your API URL and credential.");
                 return;
             }
             const auto document = QJsonDocument::fromJson(payload);
@@ -284,6 +401,7 @@ private:
     void initiate()
     {
         if (!active) return;
+        ++retryGeneration;
         const QFileInfo file(active->path);
         if (!file.isFile() || file.size() != active->size || file.lastModified().toMSecsSinceEpoch() != active->modified) {
             fail("The source file changed or moved. Skip it and add the file again."); return;
@@ -296,6 +414,12 @@ private:
         }, [this](const QJsonObject &ticket) {
             active->clipId = ticket["clipId"].toString();
             if (active->clipId.isEmpty()) { fail("The API returned no clip ID."); return; }
+            if (ticket["multipart"].isObject()) {
+                multipartTicket = ticket["multipart"].toObject();
+                nextPart = 1;
+                uploadNextPart();
+                return;
+            }
             const auto urlString = ticket["uploadUrl"].toString();
             if (urlString.isEmpty()) { complete(); return; }
             const QUrl url(urlString);
@@ -321,7 +445,55 @@ private:
                 reply->deleteLater();
                 // The signed conditional PUT is immutable. A retry can legitimately return 412.
                 if (code == 412 || (error == QNetworkReply::NoError && code >= 200 && code < 300)) complete();
+                else if (code == 0 || code == 408 || code == 429 || code >= 500)
+                    transientFailure(QString("Storage upload failed (HTTP %1).").arg(code));
                 else fail(QString("Storage upload failed (HTTP %1).").arg(code));
+            });
+        });
+    }
+    void uploadNextPart()
+    {
+        if (!active) return;
+        const auto partSize = multipartTicket["partSize"].toInt();
+        const auto count = multipartTicket["partCount"].toInt();
+        if (partSize < 5 * 1024 * 1024 || count <= 0 || count != (active->size + partSize - 1) / partSize) {
+            fail("Invalid multipart ticket."); return;
+        }
+        const auto uploaded = multipartTicket["uploadedParts"].toArray();
+        while (nextPart <= count && uploaded.contains(nextPart)) ++nextPart;
+        if (nextPart > count) { complete(); return; }
+        const int number = nextPart;
+        const qint64 offset = static_cast<qint64>(number - 1) * partSize;
+        const qint64 length = qMin(static_cast<qint64>(partSize), active->size - offset);
+        status->setText(QString("Uploading part %1 of %2: %3").arg(number).arg(count).arg(active->title));
+        sendJson(endpoint(active->clipId + "/parts/" + QString::number(number)), {},
+          [this, number, offset, length](const QJsonObject &part) {
+            const QUrl url(part["uploadUrl"].toString());
+            if (!safeTransport(url)) { fail("Storage returned an unsafe part URL."); return; }
+            const QFileInfo info(active->path);
+            if (info.size() != active->size || info.lastModified().toMSecsSinceEpoch() != active->modified) {
+                fail("The source file changed during upload. Skip and re-add it."); return;
+            }
+            QFile file(active->path);
+            if (!file.open(QIODevice::ReadOnly) || !file.seek(offset)) { fail("Could not read the source file."); return; }
+            const auto bytes = file.read(length); // Bounded to 8 MiB, not the whole recording.
+            if (bytes.size() != length) { fail("The source file changed during upload."); return; }
+            auto req = request(url);
+            req.setHeader(QNetworkRequest::ContentLengthHeader, length);
+            auto *reply = network.put(req, bytes);
+            connect(reply, &QNetworkReply::finished, this, [this, reply, number] {
+                const int code = reply->attribute(QNetworkRequest::HttpStatusCodeAttribute).toInt();
+                const auto error = reply->error();
+                reply->deleteLater();
+                if (error == QNetworkReply::NoError && code >= 200 && code < 300) {
+                    auto parts = multipartTicket["uploadedParts"].toArray();
+                    parts.append(number);
+                    multipartTicket["uploadedParts"] = parts;
+                    nextPart = number + 1;
+                    uploadNextPart();
+                } else if (code == 0 || code == 408 || code == 429 || code >= 500) {
+                    transientFailure(QString("Part upload failed (HTTP %1).").arg(code));
+                } else fail(QString("Part upload failed (HTTP %1).").arg(code));
             });
         });
     }
@@ -333,6 +505,7 @@ private:
             connectionLabel->setText("Workspace: " + active->connection.workspaceId + " (last upload verified)");
             active.reset();
             failed = false;
+            persistQueue();
             startNext();
         });
     }
@@ -360,7 +533,7 @@ void frontendCallback(enum obs_frontend_event event, void *)
 bool obs_module_load(void)
 {
     obs_frontend_add_event_callback(frontendCallback, nullptr);
-    blog(LOG_INFO, "[Clipstage] Source preview loaded; credentials and queue stay in memory");
+    blog(LOG_INFO, "[Clipstage] Source preview loaded; credentials stay in memory");
     return true;
 }
 void obs_module_unload(void)

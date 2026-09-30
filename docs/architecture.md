@@ -71,12 +71,11 @@ TLS terminates at your proxy/load balancer. Next must have internal network acce
 
 1. Client generates a stable `clientUploadId` UUID and submits title, brief, filename, MIME type, declared byte count, and optional duration.
 2. API creates an `UPLOADING` row and a server-owned key under `sources/:workspaceId/`. `(workspaceId, clientUploadId)` is unique. A retry returns the same clip; a different uploader or changed file metadata cannot take over the ID.
-3. API returns a 15-minute presigned PUT with mandatory `Content-Type` and **`If-None-Match: *`** headers. The conditional header is cryptographically signed, so a client cannot remove it to overwrite an existing source. This also prevents replay of an upload ticket from silently modifying already-approved footage.
-4. Browser/OBS streams bytes straight to the bucket. No app cookie/device bearer token goes to S3.
-5. A retried PUT can return 412 if a previous attempt succeeded. The client continues to completion, where Nest checks the actual stored byte count and MIME type with `HEAD`.
-6. Only after verification does a conditional update change `UPLOADING` to `INBOX` and increment its version. Repeated completion is idempotent and never resets later editing/approval status.
+3. For files up to 8 MiB, API returns a 15-minute presigned PUT with mandatory `Content-Type` and **`If-None-Match: *`** headers. The conditional header is cryptographically signed, so a client cannot remove it to overwrite an existing source. A retried PUT can return 412; the client proceeds to verification.
+4. Larger files use S3 multipart uploads in 8 MiB parts. The API keeps the S3 upload ID private, signs one numbered part at a time, and lists completed parts on a repeat initiation (same UUID). Browser/OBS upload only missing parts. Part URLs sign the exact expected `Content-Length` (set automatically by browser/Qt), cannot overwrite a finalized object, and server-side completion lists ETags and validates every part number and byte count before assembling the object. A part may be overwritten before completion if its response was lost. No app cookie/device bearer token goes to S3.
+5. Nest verifies the final stored byte count and MIME type with `HEAD`. Only after verification does a conditional update change `UPLOADING` to `INBOX` and increment its version. Repeated completion is idempotent and never resets later editing/approval status. Browser transient failures retry up to three times per part; browser progress/retries do not survive closing the tab. The OBS queue survives a restart and resumes missing parts after re-pairing.
 
-The maximum source size is 2 GiB; `MAX_UPLOAD_BYTES` can lower it. This is a single-PUT protocol, not a multipart/resumable protocol. A failed verification leaves the clip pending and its source immutable; start a new upload ID for a changed/corrupt file. Cleanup of abandoned uploads is not yet scheduled.
+The maximum source size is 2 GiB; `MAX_UPLOAD_BYTES` can lower it. A failed verification leaves the clip pending; start a new upload ID for a changed/corrupt file. **Configure an S3 lifecycle rule to abort incomplete multipart uploads** (e.g. after seven days) to cover crashes between S3 initiation and DB persistence and abandoned jobs. Cleanup of abandoned DB upload rows and single-PUT objects is not yet scheduled.
 
 `HEAD` checks metadata, **not the actual video container or codec**. A real media worker must probe and validate untrusted files, obtain authoritative duration, generate browser proxies/thumbnails, and enforce resource limits. Client-supplied duration is only a UI hint. Future FFmpeg jobs must use bounded arguments and sandboxing, never shell-interpolated filenames/briefs.
 
@@ -104,12 +103,12 @@ The library refreshes its first page every five seconds and fetches older pages 
 
 The dock installs after OBS's frontend finishes loading. It listens for recording-stopped and replay-saved events, snapshots the current brief/title, and queues an upload. Capture uses OBS's standard recording/replay outputs; it does not alter the stream, read the stream key, or download video from Kick.
 
-- One active upload, up to 20 waiting jobs; manual retry/skip after failures.
-- A stable UUID survives retries **within that OBS session**.
+- One active upload, up to 20 waiting jobs; bounded exponential retry for transient failures, manual retry/skip otherwise.
+- A stable UUID and job metadata survive OBS restarts in an atomic owner-readable queue file. Re-pair to resume; tokens remain memory-only.
 - File size/mtime are checked before retry; moved/modified sources must be re-added.
 - API/PUT requests don't follow redirects; TLS verification stays enabled.
-- Queue and credentials are memory-only; restarting loses pending jobs. Sources stay on disk, and the dock can upload an existing file.
-- Source splitting, persistent queue, OS keychain, installer signing, unattended backoff, progress events to the app, and automatic updates are not implemented.
+- Credentials are memory-only; pending jobs are restored from disk after restarting. Sources stay on disk, and the dock can upload an existing file.
+- Source splitting, OS keychain, installer signing, progress events to the app, and automatic updates are not implemented.
 
 Linux ARM64 compilation was validated with Ubuntu 24.04's OBS 30.0.2 / Qt 6.4.2. This is **not** validation of GUI behavior inside an OBS stream. Test actual recordings/replays, app shutdown, network interruptions, source formats, and each OS/architecture before distributing binaries.
 
@@ -117,7 +116,7 @@ Linux ARM64 compilation was validated with Ubuntu 24.04's OBS 30.0.2 / Qt 6.4.2.
 
 1. **Provider and capture verification:** real Kick credentials + callback domains; OBS GUI smoke tests; macOS/Windows builds and code signing; tests for recording shutdown, replay buffer, and output formats.
 2. **Media processing:** durable job queue, file probing, thumbnails, H.264 proxies, non-destructive edit revisions, server-rendered vertical exports, progress/retry state, checksums, malware/resource limits.
-3. **Upload resilience:** multipart upload, durable native queue, OS-keychain pairing, exponential backoff, reconciliation, orphan cleanup, storage accounting/quotas, maximum request size enforcement at every boundary.
+3. **Upload resilience:** OS-keychain pairing, abandoned-row/object reconciliation and cleanup, storage accounting/quotas, maximum request size enforcement at every boundary. Multipart chunk upload, native queue, and bounded retry are implemented; test restart and intermittent-network behavior in OBS and configure S3 abort-incomplete lifecycle rules.
 4. **Operations:** backups/restore drills, observability and request IDs, shared rate limiting with correct proxy trust, auth cleanup jobs, audit logs, token-key rotation, provider refresh/revoke, managed secrets, alerting, signed binaries.
 5. **Security review:** least-privilege IAM, bucket public-access block, encryption at rest, constrained CORS (`infra/s3-cors.json`), CSP/nonces and media-src policy, edge limits, dependency scanning, privacy/retention/deletion controls, concurrent membership/assignment edge cases.
 6. **Collaboration:** push updates, global filtering/pagination, comments, revision history, deliverable upload/approval, editor notifications, direct platform publishing only with additional explicit consent/scopes.

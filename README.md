@@ -97,7 +97,9 @@ The dock controls OBS's **normal recording output**. Start/stop it independently
 | VideoFlow timeline, saved tracks/text/trims, concurrent-edit protection              | Implemented; MP4 exports download locally, original stays unchanged |
 | Workspace updates                                                                    | Five-second polling, not push notifications                         |
 | Twitch / YouTube OAuth                                                               | Planned; reserved data model, visibly disabled UI                   |
-| Durable OBS queue, multipart uploads, processing workers, thumbnails, server exports | Planned                                                             |
+| Durable OBS queue + bounded retries                                                    | Implemented; re-pair after OBS restarts                              |
+| 8 MiB multipart uploads (browser + OBS), resumable OBS parts                           | Implemented; requires S3 abort-incomplete lifecycle rule            |
+| Processing workers, thumbnails, server exports                                          | Planned                                                             |
 
 
 
@@ -106,7 +108,7 @@ The dock controls OBS's **normal recording output**. Start/stop it independently
 
 The full VideoJSON timeline is stored on the clip; the first video layer also updates the legacy source trim fields. Original media references are rebound to a fresh playback URL when reopened. Extra local files dropped into VideoFlow are temporary; remove them before saving or use durable media URLs. Export uses VideoFlow's built-in browser MP4 download and never uploads or replaces the source. Browser codec support and asset CORS apply.
 
-Existing installations: run `bun run db:deploy` and `bun run db:generate` for the new nullable `Clip.project` JSON column.
+Existing installations: run `bun run db:deploy` and `bun run db:generate` for the committed clip project and multipart upload migrations.
 
 `@videoflow/react-video-editor` uses a tiered license: free for individuals, eligible nonprofits, and for-profit organizations with up to three employees; larger commercial organizations need a company license. Check [VideoFlow's license](https://videoflow.dev/license) before deployment. Core and renderers are Apache 2.0.
 
@@ -158,7 +160,7 @@ Important: the browser app and API must share a **hostname** because sessions ar
 
 ### Self-hosted app tier
 
-`compose.production.yaml` builds Next and Nest and puts Nginx in front of them. It does **not** run PostgreSQL or S3: provision an external database and a private bucket first. Configure bucket CORS for your HTTPS origin and make sure presigned S3 URLs are reachable by browsers and OBS. Do not use the local SeaweedFS credentials in production.
+`compose.production.yaml` builds Next and Nest and puts Nginx in front of them. It does **not** run PostgreSQL or S3: provision an external database and a private bucket first. Configure bucket CORS for your HTTPS origin, ensure presigned S3 URLs are reachable by browsers and OBS, and set an S3 lifecycle rule to abort incomplete multipart uploads (for example after seven days). Your S3 provider must support CreateMultipartUpload, UploadPart, ListParts, and CompleteMultipartUpload. Do not use the local SeaweedFS credentials in production.
 
 1. Copy `.env.production.example` to `.env.production` and supply your domain, database, Kick and S3 credentials, and a new encryption key (`openssl rand -hex 32`). Register `https://<PUBLIC_HOST>/v1/auth/kick/callback` with Kick. Point the domain's DNS at the server.
 2. Place a valid certificate and key for that domain at `infra/tls/fullchain.pem` and `infra/tls/privkey.pem` (this directory is git-ignored). Renew them outside Compose and reload Nginx after renewal. Open ports 80 and 443; no app or database ports are published.

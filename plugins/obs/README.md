@@ -45,16 +45,17 @@ While auto-upload is checked, stopped recordings and saved replays triggered els
 ## Upload behavior
 
 - `POST /v1/workspaces/:id/clips/uploads` gets a presigned ticket.
-- The local file streams directly to S3 with the exact signed headers. Application credentials are **never** sent to S3.
+- Files up to 8 MiB stream as one immutable PUT. Larger files upload directly to S3 in 8 MiB parts; the API lists uploaded parts when a job resumes. A bounded 8 MiB part is read into memory at a time. Application credentials are **never** sent to S3.
 - `POST /v1/workspaces/:id/clips/:clipId/complete` verifies size/content type, then releases the clip to the inbox.
 - Jobs use stable UUIDs for idempotent retries. A repeated immutable S3 PUT may return 412; the plugin proceeds to API verification rather than treating it as a failed upload.
-- Up to 20 waiting jobs, one active upload. Retry or skip a failed job in the dock. Subsequent jobs pause behind a failed job.
+- Up to 20 waiting jobs, one active upload. The queue is saved atomically in the OS application-data directory (`clipstage-queue.json`), including the active job and its UUID. The token is **never saved**. After restarting OBS, paste the original workspace connection again to resume; do not delete the saved queue file while jobs are pending. Only use OBS with a trusted local OS account: paths, titles, and briefs are stored in the queue file with owner-only permissions.
+- Transient connection errors, HTTP 408/429, and server errors retry up to five times with exponential delays (2–32 seconds). Other errors pause the queue for manual retry or skip. A retry reuses the UUID; if the prior PUT succeeded, 412 triggers verification. Subsequent jobs pause behind a failed job.
 - Files changed/moved after queueing must be skipped and re-added. **Original files are never removed.**
-- Use **Upload an existing clip…** to recover a capture after restarting OBS or pairing late.
+- Use **Upload an existing clip…** to recover a capture made before pairing or when the queue could not be saved.
 - TLS certificates are verified. API redirects are not followed; HTTPS is required except for loopback development endpoints. Error logs never include tokens or presigned URLs.
 
 ## Preview limitations
 
-The queue is not durable across restarts. There is no OS-keychain integration, unattended exponential backoff, chunked/multipart upload, thumbnail generation, or transcoding. The maximum file size is 2 GiB (the API may impose a lower limit). A revoked token cannot make new API requests, but an already-issued presigned URL can remain usable for up to 15 minutes; a revoked device cannot finalize the upload.
+There is no OS-keychain integration, thumbnail generation, or transcoding. Set a bucket lifecycle rule to abort incomplete multipart uploads after a suitable interval (e.g. seven days). Automatic retries are bounded; permanent failures require manual action. The maximum file size is 2 GiB (the API may impose a lower limit). A revoked token cannot make new API requests, but an already-issued presigned URL can remain usable for up to 15 minutes; a revoked device cannot finalize the upload.
 
 Linux ARM64 compilation has been checked with OBS 30.0.2 and Qt 6.4.2. Reproduce a Linux compilation check with `docker build -f plugins/obs/Dockerfile.buildcheck plugins/obs` from the repository root. This does not launch OBS. Native builds on other targets and actual recording/upload behavior must be validated on each supported OS before distribution. See `../../docs/architecture.md` for the rollout checklist.
