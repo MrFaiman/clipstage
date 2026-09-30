@@ -138,6 +138,19 @@ test("team and integration panels are honest about demo and upcoming providers",
   await expect(
     page.getByRole("heading", { name: "Kick", exact: true }),
   ).toBeVisible();
+  const sessions = page.getByRole("region", { name: "Active sessions" });
+  await expect(
+    sessions.getByRole("heading", { name: "Chrome on macOS" }),
+  ).toBeVisible();
+  await expect(
+    sessions.getByText("Current session", { exact: true }),
+  ).toBeVisible();
+  await expect(
+    sessions.getByRole("button", { name: "Revoke Safari on iOS" }),
+  ).toBeDisabled();
+  await expect(
+    sessions.getByRole("button", { name: "Sign out of all other sessions" }),
+  ).toBeDisabled();
   await expect(
     page.getByRole("button", { name: "Not available yet" }),
   ).toHaveCount(2);

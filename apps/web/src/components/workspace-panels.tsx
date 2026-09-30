@@ -35,6 +35,7 @@ import {
 import { API_URL, api, post, uploadFile } from "@/lib/api";
 import { initials, message } from "@/lib/utils";
 import { Avatar } from "./avatar";
+import { ActiveSessions } from "./active-sessions";
 import { KickMark } from "./brand";
 import { Button } from "./ui/button";
 import {
@@ -543,6 +544,7 @@ export function SettingsPanel({
         </div>
         <ConnectionsPanel connections={viewer.connections} demo={demo} />
       </section>
+      <ActiveSessions demo={demo} />
     </>
   );
 }

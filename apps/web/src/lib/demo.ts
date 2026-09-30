@@ -1,4 +1,24 @@
-import type { Clip, Member, Viewer } from "@clipstage/contracts";
+import type { ActiveSession, Clip, Member, Viewer } from "@clipstage/contracts";
+export const demoSessions: ActiveSession[] = [
+  {
+    id: "demo-current-session",
+    current: true,
+    userAgent:
+      "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) Chrome/130.0.0.0 Safari/537.36",
+    createdAt: "2026-09-25T12:00:00.000Z",
+    lastUsedAt: "2026-09-30T12:00:00.000Z",
+    expiresAt: "2026-10-30T12:00:00.000Z",
+  },
+  {
+    id: "demo-other-session",
+    current: false,
+    userAgent:
+      "Mozilla/5.0 (iPhone; CPU iPhone OS 18_0 like Mac OS X) Version/18.0 Mobile/15E148 Safari/604.1",
+    createdAt: "2026-09-24T12:00:00.000Z",
+    lastUsedAt: "2026-09-29T08:00:00.000Z",
+    expiresAt: "2026-10-29T08:00:00.000Z",
+  },
+];
 export const demoMembers: Member[] = [
   { id: "demo-owner", name: "Alex Morgan", avatarUrl: null, role: "OWNER" },
   { id: "demo-editor-1", name: "Jamie Park", avatarUrl: null, role: "EDITOR" },
