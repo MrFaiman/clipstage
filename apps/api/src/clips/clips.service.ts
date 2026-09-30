@@ -22,7 +22,7 @@ import { Database } from "../common/database";
 import { ENV, type Env } from "../config";
 import type { Actor } from "../auth/auth.types";
 import { WorkspacesService } from "../workspaces/workspaces.service";
-import { StorageService } from "./storage.service";
+import { PART_SIZE, StorageService } from "./storage.service";
 
 const include = {
   assignee: { select: { id: true, name: true, avatarUrl: true } },
@@ -182,6 +182,71 @@ export class ClipsService {
         headers: {},
         expiresAt: null,
       };
+    if (Number(clip.sizeBytes) > PART_SIZE) {
+      if (!clip.multipartId) {
+        const uploadId = await this.storage.startMultipart(
+          clip.storageKey,
+          clip.mimeType,
+        );
+        const claimed = await this.db.clip.updateMany({
+          where: { id: clip.id, status: "UPLOADING", multipartId: null },
+          data: { multipartId: uploadId },
+        });
+        if (!claimed.count) {
+          await this.storage.abortMultipart(clip.storageKey, uploadId);
+        }
+        clip = await this.db.clip.findUniqueOrThrow({ where: { id: clip.id } });
+      }
+      if (clip.status !== "UPLOADING")
+        return {
+          clipId: clip.id,
+          status: clip.status,
+          uploadUrl: null,
+          headers: {},
+          expiresAt: null,
+        };
+      if (!clip.multipartId)
+        throw new ConflictException("Retry upload initiation");
+      const size = Number(clip.sizeBytes);
+      const count = Math.ceil(size / PART_SIZE);
+      let parts: Awaited<ReturnType<StorageService["parts"]>>;
+      try {
+        parts = await this.storage.parts(clip.storageKey, clip.multipartId);
+      } catch (error) {
+        if (!(error instanceof Error && error.name === "NoSuchUpload"))
+          throw error;
+        await this.storage.verify(
+          clip.storageKey,
+          Number(clip.sizeBytes),
+          clip.mimeType,
+        );
+        parts = Array.from({ length: count }, (_, index) => ({
+          number: index + 1,
+          length: Math.min(PART_SIZE, size - index * PART_SIZE),
+          etag: "",
+        }));
+      }
+      return {
+        clipId: clip.id,
+        status: clip.status,
+        uploadUrl: null,
+        headers: {},
+        expiresAt: null,
+        multipart: {
+          partSize: PART_SIZE,
+          partCount: count,
+          uploadedParts: parts
+            .filter(
+              (p) =>
+                p.number >= 1 &&
+                p.number <= count &&
+                p.length ===
+                  Math.min(PART_SIZE, size - (p.number - 1) * PART_SIZE),
+            )
+            .map((p) => p.number),
+        },
+      };
+    }
     return {
       clipId: clip.id,
       status: clip.status,
@@ -192,11 +257,96 @@ export class ClipsService {
       )),
     };
   }
+  async part(actor: Actor, workspaceId: string, id: string, number: number) {
+    await this.workspaces.access(actor, workspaceId);
+    const clip = await this.find(workspaceId, id);
+    this.assertUploader(actor, clip);
+    if (clip.status !== "UPLOADING" || !clip.multipartId)
+      throw new ConflictException("No active multipart upload");
+    if (number < 1 || number > Math.ceil(Number(clip.sizeBytes) / PART_SIZE))
+      throw new BadRequestException("Invalid part number");
+    return {
+      uploadUrl: await this.storage.part(
+        clip.storageKey,
+        clip.multipartId,
+        number,
+        Math.min(PART_SIZE, Number(clip.sizeBytes) - (number - 1) * PART_SIZE),
+      ),
+      expiresAt: new Date(Date.now() + 900000).toISOString(),
+    };
+  }
   async complete(actor: Actor, workspaceId: string, id: string) {
     await this.workspaces.access(actor, workspaceId);
     const clip = await this.find(workspaceId, id);
     this.assertUploader(actor, clip);
     if (clip.status !== "UPLOADING") return serialize(clip);
+    if (clip.multipartId) {
+      let finalized = false;
+      try {
+        await this.storage.verify(
+          clip.storageKey,
+          Number(clip.sizeBytes),
+          clip.mimeType,
+        );
+        finalized = true; // Another request completed, or the process died before updating the row.
+      } catch (error) {
+        if (!(error instanceof BadRequestException)) throw error;
+      }
+      if (!finalized) {
+        // List parts on the server: client-supplied ETags/lengths cannot be trusted.
+        const count = Math.ceil(Number(clip.sizeBytes) / PART_SIZE);
+        let parts: Awaited<ReturnType<StorageService["parts"]>> = [];
+        let valid = false;
+        // Some S3-compatible stores expose an earlier version briefly after a
+        // part is replaced. Re-read a few times; never complete with wrong sizes.
+        for (let attempt = 0; attempt < 4; attempt++) {
+          if (attempt)
+            await new Promise((resolve) => setTimeout(resolve, 150 * attempt));
+          try {
+            parts = await this.storage.parts(clip.storageKey, clip.multipartId);
+          } catch (error) {
+            if (!(error instanceof Error && error.name === "NoSuchUpload"))
+              throw error;
+            await this.storage.verify(
+              clip.storageKey,
+              Number(clip.sizeBytes),
+              clip.mimeType,
+            );
+            finalized = true;
+            break;
+          }
+          valid =
+            parts.length === count &&
+            parts.every(
+              (part, index) =>
+                part.number === index + 1 &&
+                part.length ===
+                  Math.min(
+                    PART_SIZE,
+                    Number(clip.sizeBytes) - index * PART_SIZE,
+                  ),
+            );
+          if (valid) break;
+        }
+        if (!finalized && !valid)
+          throw new BadRequestException(
+            "Upload is missing parts or has invalid part sizes",
+          );
+        if (!finalized)
+          try {
+            await this.storage.finishMultipart(
+              clip.storageKey,
+              clip.multipartId,
+              parts.map((part) => ({ number: part.number, etag: part.etag })),
+            );
+          } catch (error) {
+            // A concurrent /complete may have finalized the same upload already.
+            // Never accept a failed completion unless the final object matches.
+            if (!(error instanceof Error && error.name === "NoSuchUpload"))
+              throw error;
+          }
+      }
+    }
     await this.storage.verify(
       clip.storageKey,
       Number(clip.sizeBytes),

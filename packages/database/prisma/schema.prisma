@@ -147,6 +147,7 @@ model Clip {
   mimeType        String
   sizeBytes       BigInt
   storageKey      String     @unique
+  multipartId     String?    // Private S3 upload ID; never sent to clients.
   durationSeconds Float?
   trimStart       Float?
   trimEnd         Float?

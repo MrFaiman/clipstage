@@ -155,6 +155,7 @@ export interface UploadTicket {
   uploadUrl: string | null;
   headers: Record<string, string>;
   expiresAt: string | null;
+  multipart?: { partSize: number; partCount: number; uploadedParts: number[] };
 }
 export interface Device {
   id: string;

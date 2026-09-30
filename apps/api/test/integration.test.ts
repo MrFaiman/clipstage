@@ -1,7 +1,11 @@
 import { afterAll, beforeAll, describe, expect, test } from "bun:test";
 import { chromium, expect as expectBrowser } from "@playwright/test";
 import { PrismaClient } from "@clipstage/database";
-import { DeleteObjectCommand, S3Client } from "@aws-sdk/client-s3";
+import {
+  AbortMultipartUploadCommand,
+  DeleteObjectCommand,
+  S3Client,
+} from "@aws-sdk/client-s3";
 import type {
   Clip,
   ClipDetail,
@@ -133,9 +137,22 @@ integration("real API + PostgreSQL + S3", () => {
     if (workspaceId) {
       const pending = await db.clip.findMany({
         where: { workspaceId },
-        select: { storageKey: true },
+        select: { storageKey: true, multipartId: true, status: true },
       });
       storageKeys.push(...pending.map((clip) => clip.storageKey));
+      await Promise.all(
+        pending
+          .filter((clip) => clip.status === "UPLOADING" && clip.multipartId)
+          .map((clip) =>
+            s3.send(
+              new AbortMultipartUploadCommand({
+                Bucket: Bun.env.S3_BUCKET,
+                Key: clip.storageKey,
+                UploadId: clip.multipartId!,
+              }),
+            ),
+          ),
+      );
       const logos = await db.workspace.findMany({
         where: { id: { in: [workspaceId, otherWorkspaceId] } },
         select: { logoKey: true },
@@ -273,6 +290,119 @@ integration("real API + PostgreSQL + S3", () => {
         .status,
     ).toBe(403);
   });
+  test("resumes multipart upload by listing parts and rejects incomplete files", async () => {
+    const size = 8 * 1024 * 1024 + 1024;
+    const input = {
+      clientUploadId: crypto.randomUUID(),
+      title: "Chunked source",
+      fileName: "parts.mp4",
+      mimeType: "video/mp4",
+      sizeBytes: size,
+    };
+    const basePath = `/workspaces/${workspaceId}/clips`;
+    const initialResponse = await request(
+      `${basePath}/uploads`,
+      ownerToken,
+      "POST",
+      input,
+    );
+    expect(initialResponse.status).toBe(201);
+    const ticket = (await initialResponse.json()) as UploadTicket;
+    expect(ticket.multipart).toMatchObject({
+      partSize: 8 * 1024 * 1024,
+      partCount: 2,
+      uploadedParts: [],
+    });
+    expect(ticket.uploadUrl).toBeNull();
+    const partPath = `${basePath}/${ticket.clipId}/parts/1`;
+    expect((await request(partPath, editorToken, "POST")).status).toBe(403);
+    expect(
+      (
+        await request(
+          `${basePath}/${ticket.clipId}/parts/3`,
+          ownerToken,
+          "POST",
+        )
+      ).status,
+    ).toBe(400);
+    const first = (await (
+      await request(partPath, ownerToken, "POST")
+    ).json()) as { uploadUrl: string };
+    expect(
+      (
+        await fetch(first.uploadUrl, {
+          method: "PUT",
+          body: new Uint8Array(8 * 1024 * 1024),
+        })
+      ).status,
+    ).toBe(200);
+    const resumed = (await (
+      await request(`${basePath}/uploads`, ownerToken, "POST", input)
+    ).json()) as UploadTicket;
+    expect(resumed.clipId).toBe(ticket.clipId);
+    expect(resumed.multipart?.uploadedParts).toEqual([1]);
+    expect(
+      (
+        await request(
+          `${basePath}/${ticket.clipId}/complete`,
+          ownerToken,
+          "POST",
+        )
+      ).status,
+    ).toBe(400);
+    const second = (await (
+      await request(`${basePath}/${ticket.clipId}/parts/2`, ownerToken, "POST")
+    ).json()) as { uploadUrl: string };
+    expect(
+      (
+        await fetch(second.uploadUrl, {
+          method: "PUT",
+          body: new Uint8Array(1024),
+        })
+      ).status,
+    ).toBe(200);
+    const completed = await request(
+      `${basePath}/${ticket.clipId}/complete`,
+      ownerToken,
+      "POST",
+    );
+    expect(completed.status).toBe(201);
+    expect(((await completed.json()) as Clip).status).toBe("INBOX");
+    expect(
+      (
+        await request(
+          `${basePath}/${ticket.clipId}/complete`,
+          ownerToken,
+          "POST",
+        )
+      ).status,
+    ).toBe(201);
+  }, 30000);
+  test("part tickets bind the exact chunk size", async () => {
+    const basePath = `/workspaces/${workspaceId}/clips`;
+    const response = await request(`${basePath}/uploads`, ownerToken, "POST", {
+      clientUploadId: crypto.randomUUID(),
+      title: "Truncated",
+      fileName: "bad.mp4",
+      mimeType: "video/mp4",
+      sizeBytes: 8 * 1024 * 1024 + 1024,
+    });
+    const ticket = (await response.json()) as UploadTicket;
+    const part = (await (
+      await request(`${basePath}/${ticket.clipId}/parts/2`, ownerToken, "POST")
+    ).json()) as { uploadUrl: string };
+    expect(
+      new URL(part.uploadUrl).searchParams.get("X-Amz-SignedHeaders"),
+    ).toContain("content-length");
+    expect(
+      (
+        await fetch(part.uploadUrl, {
+          method: "PUT",
+          body: new Uint8Array(512),
+        })
+      ).status,
+    ).toBe(403);
+  }, 15000);
   test("upload, immutable retry, scoped device, verification, editing, and approval", async () => {
     const response = await request(
       `/workspaces/${workspaceId}/devices`,

@@ -1,4 +1,5 @@
 import {
+  BadRequestException,
   Body,
   Controller,
   Get,
@@ -46,6 +47,16 @@ export class ClipsController {
       workspaceId,
       parse(createUploadSchema, body),
     );
+  }
+  @DeviceAllowed() @Post(":id/parts/:number") part(
+    @Req() req: AuthRequest,
+    @Param("workspaceId") workspaceId: string,
+    @Param("id") id: string,
+    @Param("number") number: string,
+  ) {
+    if (!/^[1-9]\d{0,3}$/.test(number))
+      throw new BadRequestException("Invalid part number");
+    return this.clips.part(req.actor, workspaceId, id, Number(number));
   }
   @DeviceAllowed() @Post(":id/complete") complete(
     @Req() req: AuthRequest,

@@ -87,7 +87,7 @@ Content-Type: application/json
   "brief": "Keep the last push and my reaction. Aim for a tight vertical edit.",
   "fileName": "clutch.mp4",
   "mimeType": "video/mp4",
-  "sizeBytes": 12582912,
+  "sizeBytes": 1048576,
   "durationSeconds": 42.5,
   "provider": "KICK"
 }
@@ -121,6 +121,8 @@ if (!result.ok && result.status !== 412) throw new Error("Retry upload");
 ```
 
 A 412 on retry means an object already exists at this immutable key; continue to verification. If the URL expires, repeat initiation with the **same clientUploadId** to get a fresh URL. If that clip has already completed, initiation returns its current status with `uploadUrl: null`, `expiresAt: null`, and empty headers. Never generate a new client ID for an ordinary network retry.
+
+For files **larger than 8 MiB**, initiation instead returns `uploadUrl: null` and `multipart: { "partSize": 8388608, "partCount": N, "uploadedParts": [1, ...] }`. Slice the file into numbered 8 MiB parts (the last may be smaller). For each missing part, call `POST /v1/workspaces/WORKSPACE_ID/clips/CLIP_ID/parts/PART_NUMBER` with your session/OBS credential. The response contains `uploadUrl` and `expiresAt`; PUT that part's raw bytes to the URL **without app credentials**. After a lost response, repeat initiation to list saved parts, then request fresh URLs for missing parts. Do not send client-supplied ETags to `/complete`; the API lists and validates parts itself. Configure your bucket to abort incomplete multipart uploads after a suitable interval.
 
 ### 3. Complete
 
