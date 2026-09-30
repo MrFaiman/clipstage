@@ -19,6 +19,12 @@ Errors have this shape:
 
 Relevant statuses: 400 invalid input/pending upload, 401 absent/expired authentication, 403 insufficient role or untrusted mutation origin, 404 unavailable resource/workspace, 409 conflict, 429 rate limit. Successful `POST` endpoints return 201 by default, `PATCH` and `DELETE` return 200. An already-completed upload is safe to complete again.
 
+## Browser sessions
+
+`GET /auth/sessions` returns an array of `{ id, createdAt, lastUsedAt, expiresAt, userAgent, current }`. Timestamps are ISO 8601; `userAgent` is nullable and limited to 256 characters when recorded at sign-in. `lastUsedAt` updates at most daily and is not a precise activity log. No token hashes or bearer tokens are returned. `/auth/me` continues to omit sessions.
+
+Session mutations require the exact app Origin. A successful DELETE returns `{ "ok": true }` (200); revoke-others returns `{ "ok": true }` (201). Revoking the current session clears its HttpOnly cookie; the frontend then navigates to login. Revoke-others leaves other users and OBS device credentials untouched. OBS bearer credentials cannot use any session-management route. A revoked session fails subsequent authentication; in-flight requests may already have passed the guard.
+
 ## Routes
 
 | Method | Route                                                | Access / purpose                                                          |
@@ -28,6 +34,9 @@ Relevant statuses: 400 invalid input/pending upload, 401 absent/expired authenti
 | GET    | `/auth/kick/callback`                                | Browser-bound state + PKCE callback                                       |
 | GET    | `/auth/me`                                           | Safe user profile, connections, workspace memberships                     |
 | POST   | `/auth/logout`                                       | Revoke current session and clear cookie                                   |
+| GET    | `/auth/sessions`                                     | List this user's unexpired browser sessions; mark the current session      |
+| DELETE | `/auth/sessions/:id`                                 | Revoke an owned session; 404 if missing/not owned; clears cookie if current |
+| POST   | `/auth/sessions/revoke-others`                        | Revoke all this user's sessions except the current one                     |
 | POST   | `/workspaces`                                        | Create workspace; body `{ "name": "My studio" }`                          |
 | PATCH  | `/workspaces/:workspaceId`                           | Owner; body `{ "name" }`; renames the workspace                           |
 | POST   | `/workspaces/:workspaceId/logo`                      | Owner; body `{ mimeType, sizeBytes }`; JPEG, PNG, or WebP up to 2 MiB     |

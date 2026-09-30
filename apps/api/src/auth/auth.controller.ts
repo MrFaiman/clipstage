@@ -1,4 +1,15 @@
-import { Controller, Get, Inject, Post, Query, Req, Res } from "@nestjs/common";
+import {
+  Controller,
+  Delete,
+  Get,
+  Inject,
+  Param,
+  Post,
+  Query,
+  Req,
+  Res,
+  UnauthorizedException,
+} from "@nestjs/common";
 import type { Request, Response } from "express";
 import { z } from "zod";
 import { parse } from "../common/validation";
@@ -27,6 +38,32 @@ export class AuthController {
   }
   @Get("me") me(@Req() req: AuthRequest) {
     return this.auth.me(req.actor.userId);
+  }
+  private sessionActor(req: AuthRequest) {
+    if (req.actor.kind !== "session")
+      throw new UnauthorizedException("Session required");
+    return req.actor;
+  }
+  @Get("sessions") sessions(@Req() req: AuthRequest) {
+    const actor = this.sessionActor(req);
+    return this.auth.sessions(actor.userId, actor.sessionId);
+  }
+  @Delete("sessions/:id") revokeSession(
+    @Req() req: AuthRequest,
+    @Param("id") id: string,
+    @Res({ passthrough: true }) res: Response,
+  ) {
+    const actor = this.sessionActor(req);
+    return this.auth.revokeSession(
+      actor.userId,
+      actor.sessionId,
+      parse(z.string().cuid(), id),
+      res,
+    );
+  }
+  @Post("sessions/revoke-others") revokeOthers(@Req() req: AuthRequest) {
+    const actor = this.sessionActor(req);
+    return this.auth.revokeOtherSessions(actor.userId, actor.sessionId);
   }
   @Post("logout") logout(
     @Req() req: AuthRequest,

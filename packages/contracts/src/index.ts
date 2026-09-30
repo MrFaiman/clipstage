@@ -111,6 +111,14 @@ export interface Workspace {
   role: Role;
   logoUrl: string | null;
 }
+export interface ActiveSession {
+  id: string;
+  createdAt: string;
+  lastUsedAt: string;
+  expiresAt: string;
+  userAgent: string | null;
+  current: boolean;
+}
 export interface Connection {
   id: string;
   provider: Provider;

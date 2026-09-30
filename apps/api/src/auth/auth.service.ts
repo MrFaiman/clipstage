@@ -3,10 +3,12 @@ import {
   ConflictException,
   Inject,
   Injectable,
+  NotFoundException,
   UnauthorizedException,
 } from "@nestjs/common";
 import type { CookieOptions, Request, Response } from "express";
 import type { Session } from "@clipstage/database";
+import type { ActiveSession } from "@clipstage/contracts";
 import { Database } from "../common/database";
 import { encrypt, hashToken, randomToken, safeEqual } from "../common/crypto";
 import { ENV, type Env } from "../config";
@@ -252,6 +254,50 @@ export class AuthService {
         ),
       ),
     };
+  }
+  async sessions(userId: string, currentId: string): Promise<ActiveSession[]> {
+    const now = new Date();
+    const sessions = await this.db.session.findMany({
+      where: {
+        userId,
+        expiresAt: { gt: now },
+        createdAt: { gt: new Date(now.getTime() - SESSION_CAP) },
+      },
+      select: {
+        id: true,
+        createdAt: true,
+        lastUsedAt: true,
+        expiresAt: true,
+        userAgent: true,
+      },
+      orderBy: [{ lastUsedAt: "desc" }, { id: "asc" }],
+    });
+    return sessions.map((session) => ({
+      id: session.id,
+      createdAt: session.createdAt.toISOString(),
+      lastUsedAt: session.lastUsedAt.toISOString(),
+      expiresAt: session.expiresAt.toISOString(),
+      userAgent: session.userAgent,
+      current: session.id === currentId,
+    }));
+  }
+  async revokeSession(
+    userId: string,
+    currentId: string,
+    id: string,
+    res: Response,
+  ) {
+    const deleted = await this.db.session.deleteMany({ where: { id, userId } });
+    if (!deleted.count) throw new NotFoundException("Session not found");
+    if (id === currentId)
+      res.clearCookie(this.cookieName, this.cookieOptions());
+    return { ok: true };
+  }
+  async revokeOtherSessions(userId: string, currentId: string) {
+    await this.db.session.deleteMany({
+      where: { userId, id: { not: currentId } },
+    });
+    return { ok: true };
   }
   async logout(req: Request, res: Response) {
     const session = await this.session(req);

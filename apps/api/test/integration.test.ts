@@ -7,6 +7,7 @@ import {
   S3Client,
 } from "@aws-sdk/client-s3";
 import type {
+  ActiveSession,
   Clip,
   ClipDetail,
   LogoTicket,
@@ -253,6 +254,151 @@ integration("real API + PostgreSQL + S3", () => {
     expect(
       (await request("/auth/me", token)).headers.get("set-cookie"),
     ).toBeNull();
+  });
+  test("session management is scoped, excludes expired rows and preserves the current session", async () => {
+    const token = randomToken(),
+      otherToken = randomToken();
+    const user = await db.user.create({
+      data: { name: "Session management test" },
+    });
+    try {
+      const current = await db.session.create({
+        data: {
+          userId: user.id,
+          tokenHash: hashToken(token),
+          expiresAt: new Date(Date.now() + 86400000),
+          userAgent: "Test browser",
+        },
+      });
+      const other = await db.session.create({
+        data: {
+          userId: user.id,
+          tokenHash: hashToken(otherToken),
+          expiresAt: new Date(Date.now() + 86400000),
+        },
+      });
+      await db.session.create({
+        data: {
+          userId: user.id,
+          tokenHash: hashToken(randomToken()),
+          expiresAt: new Date(Date.now() - 86400000),
+        },
+      });
+      await db.session.create({
+        data: {
+          userId: user.id,
+          tokenHash: hashToken(randomToken()),
+          createdAt: new Date(Date.now() - 91 * 86400000),
+          expiresAt: new Date(Date.now() + 86400000),
+        },
+      });
+      expect((await request("/auth/sessions")).status).toBe(401);
+      const listed = await request("/auth/sessions", token);
+      expect(listed.status).toBe(200);
+      const sessions = (await listed.json()) as ActiveSession[];
+      expect(sessions).toHaveLength(2);
+      expect(
+        sessions
+          .filter((session) => session.current)
+          .map((session) => session.id),
+      ).toEqual([current.id]);
+      expect(
+        sessions.find((session) => session.id === current.id)?.userAgent,
+      ).toBe("Test browser");
+      expect(
+        sessions.every(
+          (session) => !("tokenHash" in session) && !("userId" in session),
+        ),
+      ).toBe(true);
+      expect(
+        (await request(`/auth/sessions/${other.id}`, ownerToken, "DELETE"))
+          .status,
+      ).toBe(404);
+      expect(
+        (
+          await request(
+            `/auth/sessions/${other.id}`,
+            token,
+            "DELETE",
+            undefined,
+            false,
+          )
+        ).status,
+      ).toBe(403);
+      expect(
+        (await request(`/auth/sessions/${other.id}`, token, "DELETE")).status,
+      ).toBe(200);
+      expect((await request("/auth/me", otherToken)).status).toBe(401);
+      const remaining = await db.session.create({
+        data: {
+          userId: user.id,
+          tokenHash: hashToken(randomToken()),
+          expiresAt: new Date(Date.now() + 86400000),
+        },
+      });
+      expect(
+        (
+          await request(
+            "/auth/sessions/revoke-others",
+            token,
+            "POST",
+            undefined,
+            false,
+          )
+        ).status,
+      ).toBe(403);
+      expect(
+        (await request("/auth/sessions/revoke-others", token, "POST")).status,
+      ).toBe(201);
+      expect(
+        await db.session.findMany({
+          where: { userId: user.id },
+          select: { id: true },
+        }),
+      ).toEqual([{ id: current.id }]);
+      expect(
+        await db.session.findUnique({ where: { id: remaining.id } }),
+      ).toBeNull();
+      expect((await request("/auth/me", ownerToken)).status).toBe(200);
+      const signedOut = await request(
+        `/auth/sessions/${current.id}`,
+        token,
+        "DELETE",
+      );
+      expect(signedOut.status).toBe(200);
+      expect(signedOut.headers.get("set-cookie")).toContain("cs_session=;");
+      expect((await request("/auth/me", token)).status).toBe(401);
+    } finally {
+      await db.user.delete({ where: { id: user.id } });
+    }
+  });
+  test("OBS credentials cannot manage browser sessions", async () => {
+    const response = await request(
+      `/workspaces/${workspaceId}/devices`,
+      ownerToken,
+      "POST",
+      { name: "Session boundary test" },
+    );
+    const device = (await response.json()) as { id: string; token: string };
+    const current = await db.session.findUniqueOrThrow({
+      where: { tokenHash: hashToken(ownerToken) },
+    });
+    expect((await request("/auth/sessions", device.token)).status).toBe(401);
+    expect(
+      (await request(`/auth/sessions/${current.id}`, device.token, "DELETE"))
+        .status,
+    ).toBe(401);
+    expect(
+      (await request("/auth/sessions/revoke-others", device.token, "POST"))
+        .status,
+    ).toBe(401);
+    expect(
+      (await request("/auth/sessions/revoke-others", ownerToken, "POST"))
+        .status,
+    ).toBe(201);
+    expect(
+      await db.device.findUnique({ where: { id: device.id } }),
+    ).not.toBeNull();
   });
   test("cookie auth, tenant isolation, and owner-only operations", async () => {
     expect((await request("/auth/me")).status).toBe(401);
