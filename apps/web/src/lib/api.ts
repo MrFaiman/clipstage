@@ -32,11 +32,21 @@ export const post = <T>(path: string, body?: unknown) =>
     body: body === undefined ? undefined : JSON.stringify(body),
   });
 
+export class StorageUploadError extends Error {
+  constructor(
+    public readonly status: number,
+    message: string,
+  ) {
+    super(message);
+  }
+}
+
 export function uploadFile(
   url: string,
-  file: File,
+  file: Blob,
   headers: Record<string, string>,
   progress: (percent: number) => void,
+  allowAlreadyExists = true,
 ): Promise<void> {
   return new Promise((resolve, reject) => {
     const xhr = new XMLHttpRequest();
@@ -50,24 +60,30 @@ export function uploadFile(
     };
     xhr.onload = () => {
       // 412 means this immutable upload already succeeded. The API still verifies it.
-      if ((xhr.status >= 200 && xhr.status < 300) || xhr.status === 412)
+      if (
+        (xhr.status >= 200 && xhr.status < 300) ||
+        (allowAlreadyExists && xhr.status === 412)
+      )
         resolve();
       else
         reject(
-          new Error(
+          new StorageUploadError(
+            xhr.status,
             `Storage upload failed (${xhr.status}). Check your connection and retry.`,
           ),
         );
     };
     xhr.onerror = () =>
       reject(
-        new Error(
+        new StorageUploadError(
+          0,
           "Could not reach storage. Check your connection and S3 CORS settings.",
         ),
       );
     xhr.ontimeout = () =>
       reject(
-        new Error(
+        new StorageUploadError(
+          408,
           "Upload timed out. Your file is safe locally; retry the upload.",
         ),
       );

@@ -11,6 +11,8 @@ import {
   type Workspace,
 } from "@clipstage/contracts";
 import { post, uploadFile } from "@/lib/api";
+import { retryCompletion, uploadWithRetry } from "@/lib/resilient-upload";
+import { uploadMultipart } from "@/lib/multipart-upload";
 import { fileSize, message } from "@/lib/utils";
 import {
   Dialog,
@@ -126,12 +128,38 @@ export function UploadDialog({
       } else {
         const base = `/workspaces/${workspace.id}/clips`;
         const ticket = await post<UploadTicket>(`${base}/uploads`, input);
-        if (ticket.uploadUrl) {
-          setPhase("Uploading directly to storage…");
-          await uploadFile(ticket.uploadUrl, file, ticket.headers, setProgress);
+        setPhase("Uploading directly to storage…");
+        if (ticket.multipart) {
+          await uploadMultipart(
+            ticket,
+            file,
+            () => post<UploadTicket>(`${base}/uploads`, input),
+            async (clipId, number) =>
+              (
+                await post<{ uploadUrl: string }>(
+                  `${base}/${clipId}/parts/${number}`,
+                )
+              ).uploadUrl,
+            (url, chunk, progress) =>
+              uploadFile(url, chunk, {}, progress, false),
+            setProgress,
+          );
+        } else {
+          await uploadWithRetry(
+            ticket,
+            () => post<UploadTicket>(`${base}/uploads`, input),
+            (next) =>
+              uploadFile(next.uploadUrl!, file, next.headers, setProgress),
+            (attempt) => {
+              setPhase(`Connection interrupted. Retrying (${attempt}/3)…`);
+              setProgress(0);
+            },
+          );
         }
         setPhase("Verifying your upload…");
-        const clip = await post<Clip>(`${base}/${ticket.clipId}/complete`);
+        const clip = await retryCompletion(() =>
+          post<Clip>(`${base}/${ticket.clipId}/complete`),
+        );
         onUploaded(clip);
         toast.success("Clip uploaded. Your team can see it now.");
       }

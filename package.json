@@ -17,7 +17,7 @@
     "dev:web": "bun --env-file=.env run --filter @clipstage/web dev",
     "build": "bun run --filter @clipstage/api build && bun run --filter @clipstage/web build",
     "typecheck": "bun run --filter '*' typecheck && tsc --noEmit",
-    "test": "bun test packages/contracts/src apps/api/test",
+    "test": "bun test packages/contracts/src apps/api/test apps/web/src/lib/resilient-upload.test.ts apps/web/src/lib/multipart-upload.test.ts",
     "check": "bun run typecheck && bun run test",
     "format": "prettier --write .",
     "db:generate": "bun --env-file=.env run --filter @clipstage/database generate",
