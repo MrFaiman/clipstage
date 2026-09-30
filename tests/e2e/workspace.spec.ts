@@ -53,6 +53,42 @@ test("library filters, search, views, and non-destructive editing", async ({
   expect(errors).toEqual([]);
 });
 
+test("production stages filter real loaded clip counts", async ({ page }) => {
+  await page.goto("/");
+  const stages = page.getByRole("group", { name: "Production stages" });
+  await expect(stages.getByRole("button")).toHaveCount(4);
+  await expect(
+    page.getByText("Counts reflect loaded clips, not the entire workspace."),
+  ).toBeVisible();
+  const review = stages.getByRole("button", { name: /03 \/ In review/ });
+  await review.click();
+  await expect(review).toHaveAttribute("aria-pressed", "true");
+  await expect(page.locator(".clip-card")).toHaveCount(1);
+  await page.getByRole("button", { name: /^All clips/ }).click();
+  await expect(review).toHaveAttribute("aria-pressed", "false");
+  await expect(page.locator(".clip-card")).toHaveCount(6);
+  await page.getByRole("button", { name: "Connect OBS", exact: true }).click();
+  await expect(
+    page.getByRole("button", { name: "Create credential" }),
+  ).toBeDisabled();
+});
+
+test("studio layout stays within small and medium viewports", async ({
+  page,
+}) => {
+  await page.emulateMedia({ reducedMotion: "reduce" });
+  for (const width of [375, 768, 1024, 1440]) {
+    await page.setViewportSize({ width, height: 900 });
+    await page.goto("/");
+    await expect(page.locator(".pipeline-stage")).toHaveCount(4);
+    expect(
+      await page.evaluate(
+        () => document.documentElement.scrollWidth <= window.innerWidth,
+      ),
+    ).toBe(true);
+  }
+});
+
 test("a manual demo upload stays local and can be previewed", async ({
   page,
 }) => {
@@ -107,6 +143,13 @@ test("team and integration panels are honest about demo and upcoming providers",
   ).toHaveCount(2);
   await page.getByRole("button", { name: /OBS integration/ }).click();
   await expect(
+    page.getByRole("heading", { name: "Stop recording. Start collaborating." }),
+  ).toHaveCSS("color", "rgb(255, 255, 255)");
+  await expect(page.locator(".obs-intro .eyebrow")).toHaveCSS(
+    "color",
+    "rgb(225, 214, 255)",
+  );
+  await expect(
     page.getByRole("button", { name: "Create credential" }),
   ).toBeDisabled();
   await expect(
@@ -122,6 +165,9 @@ test("mobile navigation and layout work without horizontal overflow", async ({
 }) => {
   await page.setViewportSize({ width: 390, height: 844 });
   await page.goto("/");
+  await expect(
+    page.getByRole("heading", { name: "From live moment to final cut." }),
+  ).toBeVisible();
   await expect(page.locator(".clip-card")).toHaveCount(6);
   expect(
     await page.evaluate(

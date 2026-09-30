@@ -1,6 +1,7 @@
 import type { Metadata } from "next";
 import { Toaster } from "sonner";
 import "./globals.css";
+import "./studio.css";
 export const metadata: Metadata = {
   title: "Clipstage — from live to next-level",
   description:

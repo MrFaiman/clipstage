@@ -54,6 +54,7 @@ import {
 } from "./ui/dialog";
 import { Input, Label } from "./ui/fields";
 import { ClipCard } from "./clip-card";
+import { StudioOverview } from "./studio-overview";
 import {
   TeamPanel,
   SettingsPanel,
@@ -457,85 +458,24 @@ export function Dashboard({
             <>
               <div className="page-heading">
                 <div>
-                  <div className="eyebrow">GOOD STREAMS. GREAT CLIPS.</div>
+                  <div className="eyebrow">
+                    YOUR WORKSPACE / YOUR NEXT GREAT EDIT
+                  </div>
                   <h1>
                     Your best moments, <span>all here.</span>
                   </h1>
-                  <p>From your stream to your team's next great edit.</p>
+                  <p>The footage, the brief, the team. One creative home.</p>
                 </div>
                 <Button variant="dark" onClick={() => setUploadOpen(true)}>
                   <Upload size={15} /> Upload clip
                 </Button>
               </div>
-              <section
-                className="capture-hero"
-                aria-labelledby="capture-heading"
-              >
-                <div className="hero-copy">
-                  <span className="hero-eyebrow">
-                    <span /> MADE FOR YOUR WORKFLOW
-                  </span>
-                  <h2 id="capture-heading">
-                    Stay in the moment.
-                    <br />
-                    We'll take it from here.
-                  </h2>
-                  <p>
-                    Hit record in OBS. Add a brief. Your editor gets
-                    <br className="hidden sm:block" /> the clip before chat has
-                    moved on.
-                  </p>
-                  <button className="hero-cta" onClick={() => navigate("obs")}>
-                    Connect OBS <ArrowRight size={14} />
-                  </button>
-                </div>
-                <div className="hero-art" aria-hidden="true">
-                  <div className="hero-orbit orbit-one" />
-                  <div className="hero-orbit orbit-two" />
-                  <div className="hero-spark spark-one">+</div>
-                  <div className="hero-spark spark-two">+</div>
-                  <div className="capture-widget">
-                    <div className="widget-top">
-                      <span>
-                        <span className="recording-dot" /> RECORDING A MOMENT
-                      </span>
-                      <Monitor size={13} />
-                    </div>
-                    <div className="waveform">
-                      {Array.from({ length: 36 }, (_, i) => (
-                        <i
-                          key={i}
-                          style={{
-                            height: `${12 + ((i * 17 + i * i * 3) % 41)}px`,
-                          }}
-                        />
-                      ))}
-                    </div>
-                    <div className="widget-time">
-                      00:42<span>1080p · 60 fps</span>
-                    </div>
-                  </div>
-                  <div className="handoff-line">
-                    <span />
-                    <ArrowRight size={17} />
-                  </div>
-                  <div className="delivery-widget">
-                    <span className="delivery-check">
-                      <Check size={14} strokeWidth={3} />
-                    </span>
-                    <div>
-                      <strong>Ready for its next stage.</strong>
-                      <span>Your editor can take it from here.</span>
-                    </div>
-                    <span className="mini-avatars">
-                      <Avatar
-                        name="Jamie Park"
-                        className="size-7 ring-[#2e3330]"
-                      />
-                    </span>
-                  </div>
-                </div>
-              </section>
+              <StudioOverview
+                clips={clips}
+                status={status}
+                onStatus={setStatus}
+                onConnect={() => navigate("obs")}
+              />
               <div className="library-heading">
                 <div className="flex items-center gap-3">
                   <h2>Clip library</h2>

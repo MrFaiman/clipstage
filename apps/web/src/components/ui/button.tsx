@@ -18,9 +18,9 @@ const buttonVariants = cva(
           "bg-red-50 text-red-700 hover:bg-red-100 border border-red-200",
       },
       size: {
-        default: "h-10 px-4",
-        sm: "h-8 px-3 text-xs",
-        icon: "size-9",
+        default: "h-11 px-4",
+        sm: "h-11 px-3 text-xs",
+        icon: "size-11",
         lg: "h-12 px-6",
       },
     },
