@@ -6,6 +6,7 @@ import {
   UnauthorizedException,
 } from "@nestjs/common";
 import type { CookieOptions, Request, Response } from "express";
+import type { Session } from "@clipstage/database";
 import { Database } from "../common/database";
 import { encrypt, hashToken, randomToken, safeEqual } from "../common/crypto";
 import { ENV, type Env } from "../config";
@@ -15,7 +16,14 @@ import {
   WorkspacesService,
 } from "../workspaces/workspaces.service";
 
-const SESSION_AGE = 1000 * 60 * 60 * 24 * 30;
+const DAY = 1000 * 60 * 60 * 24;
+const SESSION_AGE = DAY * 30;
+const SESSION_CAP = DAY * 90;
+export function sessionExpiry(createdAt: Date, now: Date): Date {
+  return new Date(
+    Math.min(now.getTime() + SESSION_AGE, createdAt.getTime() + SESSION_CAP),
+  );
+}
 const STATE_AGE = 1000 * 60 * 10;
 
 @Injectable()
@@ -45,7 +53,41 @@ export class AuthService {
     const session = await this.db.session.findUnique({
       where: { tokenHash: hashToken(token) },
     });
-    return session && session.expiresAt > new Date() ? session : null;
+    const now = new Date();
+    return session &&
+      session.expiresAt > now &&
+      session.createdAt.getTime() + SESSION_CAP > now.getTime()
+      ? session
+      : null;
+  }
+  async touch(session: Session, req: Request, res: Response) {
+    // SSR cannot deliver Set-Cookie to the browser. Do not let its fetch consume
+    // the daily renewal slot before a browser request can renew the cookie.
+    if (
+      req.headers.origin !== this.env.WEB_ORIGIN &&
+      req.headers["sec-fetch-site"] !== "same-origin"
+    )
+      return;
+    const now = new Date();
+    const dayAgo = new Date(now.getTime() - DAY);
+    if (session.lastUsedAt >= dayAgo) return;
+    const expiresAt = sessionExpiry(session.createdAt, now);
+    if (expiresAt <= now)
+      throw new UnauthorizedException("Sign in to continue");
+    const updated = await this.db.session.updateMany({
+      where: {
+        id: session.id,
+        lastUsedAt: { lt: dayAgo },
+        expiresAt: { gt: now },
+      },
+      data: { expiresAt, lastUsedAt: now },
+    });
+    if (updated.count === 1) {
+      res.cookie(this.cookieName, req.cookies[this.cookieName], {
+        ...this.cookieOptions(),
+        maxAge: expiresAt.getTime() - now.getTime(),
+      });
+    }
   }
   async begin(req: Request, res: Response) {
     const state = randomToken(),
@@ -160,6 +202,8 @@ export class AuthService {
     });
     const oldSession = await this.session(req);
     const token = randomToken();
+    const now = new Date();
+    const expiresAt = sessionExpiry(now, now);
     await this.db.$transaction(async (tx) => {
       if (oldSession)
         await tx.session.deleteMany({ where: { id: oldSession.id } });
@@ -167,13 +211,16 @@ export class AuthService {
         data: {
           tokenHash: hashToken(token),
           userId,
-          expiresAt: new Date(Date.now() + SESSION_AGE),
+          createdAt: now,
+          lastUsedAt: now,
+          userAgent: req.headers["user-agent"]?.slice(0, 256) ?? null,
+          expiresAt,
         },
       });
     });
     res.cookie(this.cookieName, token, {
       ...this.cookieOptions(),
-      maxAge: SESSION_AGE,
+      maxAge: expiresAt.getTime() - now.getTime(),
     });
     res.redirect(`${this.env.WEB_ORIGIN}/`);
   }

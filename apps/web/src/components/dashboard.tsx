@@ -128,6 +128,7 @@ export function Dashboard({
     error,
   } = useSWR<ClipPage>(demo ? null : `${base}/clips`, api, {
     fallbackData: initialClips,
+    revalidateOnMount: true, // Browser request renews the session cookie; SSR cannot.
     refreshInterval: 5000,
     keepPreviousData: true,
   });

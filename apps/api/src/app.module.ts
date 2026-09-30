@@ -6,6 +6,7 @@ import { Database } from "./common/database";
 import { Public } from "./auth/auth.types";
 import { AuthGuard } from "./auth/auth.guard";
 import { AuthService } from "./auth/auth.service";
+import { AuthCleanupService } from "./auth/auth-cleanup.service";
 import { AuthController } from "./auth/auth.controller";
 import { KickProvider } from "./auth/kick.provider";
 import { WorkspacesService } from "./workspaces/workspaces.service";
@@ -37,6 +38,7 @@ export class AppModule {
         { provide: ENV, useValue: env },
         Database,
         AuthService,
+        AuthCleanupService,
         KickProvider,
         WorkspacesService,
         ClipsService,

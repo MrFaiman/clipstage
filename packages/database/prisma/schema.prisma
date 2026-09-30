@@ -72,6 +72,9 @@ model Session {
   id        String   @id @default(cuid())
   tokenHash String   @unique
   userId    String
+  createdAt DateTime @default(now())
+  lastUsedAt DateTime @default(now())
+  userAgent String?
   expiresAt DateTime
   user      User     @relation(fields: [userId], references: [id], onDelete: Cascade)
 

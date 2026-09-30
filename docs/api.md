@@ -4,7 +4,7 @@ Base: `http://localhost:4000/v1`. JSON unless redirecting or accessing a signed 
 
 ## Auth and errors
 
-Browser requests use `credentials: include`. Mutations must include the exact app `Origin`; no browser bearer tokens are stored in localStorage. The API emits `Cache-Control: no-store` and restricts CORS to `WEB_ORIGIN`.
+Browser requests use `credentials: include`. Sessions have a 30-day idle expiry and a 90-day absolute lifetime. Authenticated browser API requests renew expiry and the session cookie at most daily; Next server-side reads do not renew. Expired sessions cannot be renewed. Mutations must include the exact app `Origin`; no browser bearer tokens are stored in localStorage. The API emits `Cache-Control: no-store` and restricts CORS to `WEB_ORIGIN`.
 
 OBS requests use `Authorization: Bearer cs_obs_<credential>` **only** on the two upload endpoints. Device tokens have no list/read/edit/admin scope. They are bound to a workspace, hashed at rest, expire in 90 days, and are returned once on creation.
 

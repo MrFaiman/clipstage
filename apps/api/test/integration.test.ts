@@ -33,6 +33,8 @@ integration("real API + PostgreSQL + S3", () => {
     otherWorkspaceId: string;
   let process: Bun.Subprocess<"ignore", "ignore", "pipe"> | undefined;
   const storageKeys: string[] = [];
+  let expiredSessionId: string;
+  const expiredAttemptHash = hashToken(randomToken());
   const s3 = new S3Client({
     endpoint: Bun.env.S3_ENDPOINT,
     region: Bun.env.S3_REGION,
@@ -114,6 +116,23 @@ integration("real API + PostgreSQL + S3", () => {
         },
       })
     ).id;
+    expiredSessionId = (
+      await db.session.create({
+        data: {
+          userId: ownerId,
+          tokenHash: hashToken(randomToken()),
+          expiresAt: new Date(Date.now() - 60000),
+        },
+      })
+    ).id;
+    await db.oAuthAttempt.create({
+      data: {
+        stateHash: expiredAttemptHash,
+        verifier: "expired-test",
+        userId: ownerId,
+        expiresAt: new Date(Date.now() - 60000),
+      },
+    });
     process = Bun.spawn(["bun", "apps/api/src/main.ts"], {
       env: { ...Bun.env, NODE_ENV: "test", PORT: "4400", WEB_ORIGIN: origin },
       stdout: "ignore",
@@ -174,6 +193,66 @@ integration("real API + PostgreSQL + S3", () => {
     }
     await db.$disconnect();
     s3.destroy();
+  });
+  test("boot cleanup removes expired authentication rows", async () => {
+    expect(
+      await db.session.findUnique({ where: { id: expiredSessionId } }),
+    ).toBeNull();
+    expect(
+      await db.oAuthAttempt.findUnique({
+        where: { stateHash: expiredAttemptHash },
+      }),
+    ).toBeNull();
+    expect(
+      await db.session.findUnique({
+        where: { tokenHash: hashToken(ownerToken) },
+      }),
+    ).not.toBeNull();
+  });
+  test("browser activity renews once and SSR cannot consume the cookie renewal", async () => {
+    const token = randomToken();
+    const createdAt = new Date(Date.now() - 80 * 86400000);
+    const lastUsedAt = new Date(Date.now() - 2 * 86400000);
+    const session = await db.session.create({
+      data: {
+        userId: ownerId,
+        tokenHash: hashToken(token),
+        createdAt,
+        lastUsedAt,
+        expiresAt: new Date(Date.now() + 86400000),
+        userAgent: "Integration browser",
+      },
+    });
+    const ssr = await request("/auth/me", token, "GET", undefined, false);
+    expect(ssr.status).toBe(200);
+    expect(ssr.headers.get("set-cookie")).toBeNull();
+    expect(
+      (await db.session.findUniqueOrThrow({ where: { id: session.id } }))
+        .lastUsedAt,
+    ).toEqual(lastUsedAt);
+    const responses = await Promise.all([
+      request("/auth/me", token),
+      request("/auth/me", token),
+    ]);
+    expect(responses.every((response) => response.status === 200)).toBe(true);
+    expect(
+      responses.filter((response) => response.headers.has("set-cookie")),
+    ).toHaveLength(1);
+    const cookie = responses
+      .find((response) => response.headers.has("set-cookie"))!
+      .headers.get("set-cookie")!;
+    expect(cookie).toContain(`cs_session=${token}`);
+    expect(cookie).toContain("HttpOnly");
+    const renewed = await db.session.findUniqueOrThrow({
+      where: { id: session.id },
+    });
+    expect(renewed.expiresAt.getTime()).toBe(
+      createdAt.getTime() + 90 * 86400000,
+    );
+    expect(renewed.lastUsedAt.getTime()).toBeGreaterThan(lastUsedAt.getTime());
+    expect(
+      (await request("/auth/me", token)).headers.get("set-cookie"),
+    ).toBeNull();
   });
   test("cookie auth, tenant isolation, and owner-only operations", async () => {
     expect((await request("/auth/me")).status).toBe(401);

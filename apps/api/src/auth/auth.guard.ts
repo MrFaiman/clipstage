@@ -7,6 +7,7 @@ import {
   type ExecutionContext,
 } from "@nestjs/common";
 import { Reflector } from "@nestjs/core";
+import type { Response } from "express";
 import { Database } from "../common/database";
 import { hashToken } from "../common/crypto";
 import { ENV, type Env } from "../config";
@@ -37,6 +38,7 @@ export class AuthGuard implements CanActivate {
     if (this.reflector.getAllAndOverride<boolean>(PUBLIC, targets)) return true;
     const req = context.switchToHttp().getRequest<AuthRequest>();
     const bearer = req.headers.authorization;
+    let browserSession: Awaited<ReturnType<AuthService["session"]>> = null;
     if (bearer) {
       if (
         !this.reflector.getAllAndOverride<boolean>(DEVICE_ALLOWED, targets) ||
@@ -61,7 +63,12 @@ export class AuthGuard implements CanActivate {
     } else {
       const session = await this.auth.session(req);
       if (!session) throw new UnauthorizedException("Sign in to continue");
-      req.actor = { kind: "session", userId: session.userId };
+      browserSession = session;
+      req.actor = {
+        kind: "session",
+        userId: session.userId,
+        sessionId: session.id,
+      };
     }
     if (
       !trustedMutation(
@@ -72,6 +79,12 @@ export class AuthGuard implements CanActivate {
       )
     )
       throw new ForbiddenException("Untrusted request origin");
+    if (browserSession)
+      await this.auth.touch(
+        browserSession,
+        req,
+        context.switchToHttp().getResponse<Response>(),
+      );
     return true;
   }
 }
