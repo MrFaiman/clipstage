@@ -283,7 +283,11 @@ export function TeamPanel({
               className="flex flex-wrap items-center gap-4 px-6 py-5"
               key={member.id}
             >
-              <Avatar name={member.name} className="size-10 text-xs" />
+              <Avatar
+                name={member.name}
+                avatarUrl={member.avatarUrl}
+                className="size-10 text-xs"
+              />
               <div className="min-w-0 flex-1">
                 <h3 className="text-sm font-semibold">{member.name}</h3>
                 <p className="mt-1 text-xs text-muted-foreground">
@@ -522,7 +526,11 @@ export function SettingsPanel({
         className="account-summary panel-card"
         aria-labelledby="account-heading"
       >
-        <Avatar name={viewer.name} className="size-12 ring-0" />
+        <Avatar
+          name={viewer.name}
+          avatarUrl={viewer.avatarUrl}
+          className="size-12 ring-0"
+        />
         <div>
           <h2 id="account-heading">{viewer.name}</h2>
           <p>{demo ? "Demo account" : "Personal account"}</p>

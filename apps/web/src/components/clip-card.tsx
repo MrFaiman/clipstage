@@ -98,6 +98,7 @@ export function ClipCard({
               <>
                 <Avatar
                   name={clip.assignee.name}
+                  avatarUrl={clip.assignee.avatarUrl}
                   className="size-5 text-[8px]"
                 />
                 <span>{clip.assignee.name}</span>

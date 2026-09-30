@@ -118,6 +118,13 @@ export class AuthService {
           },
         });
         id = user.id;
+      } else if (!attempt.userId) {
+        // Refresh the returning user's picture. Linking another Kick identity
+        // must not silently replace the primary account's profile photo.
+        await tx.user.update({
+          where: { id },
+          data: { avatarUrl: profile.profile_picture ?? null },
+        });
       }
       const data = {
         username: profile.name,

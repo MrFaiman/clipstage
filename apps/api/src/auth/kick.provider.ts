@@ -34,7 +34,20 @@ export const kickProfileSchema = z.object({
             if (!email) return null;
             return z.string().email().safeParse(email).success ? email : null;
           }),
-        profile_picture: z.string().nullish(),
+        profile_picture: z
+          .string()
+          .nullish()
+          .transform((value) => {
+            if (!value) return null;
+            try {
+              const url = new URL(value);
+              return url.protocol === "https:" && !url.username && !url.password
+                ? url.href
+                : null;
+            } catch {
+              return null;
+            }
+          }),
       }),
     )
     .min(1),

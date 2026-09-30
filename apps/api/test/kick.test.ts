@@ -40,6 +40,32 @@ describe("Kick provider boundary", () => {
         .success,
     ).toBe(false);
   });
+  test.each([
+    undefined,
+    null,
+    "",
+    "not-a-url",
+    "http://cdn.example.com/photo.jpg",
+    "javascript:alert(1)",
+    "https://user:secret@cdn.example.com/photo.jpg",
+  ])("ignores unsafe or missing profile picture %p", (profile_picture) => {
+    const profile = kickProfileSchema.parse({
+      data: [{ user_id: 123, name: "Streamer", profile_picture }],
+    }).data[0];
+    expect(profile?.profile_picture).toBeNull();
+  });
+  test("keeps the HTTPS OAuth profile picture", () => {
+    const profile = kickProfileSchema.parse({
+      data: [
+        {
+          user_id: 123,
+          name: "Streamer",
+          profile_picture: "https://cdn.example.com/photo.jpg",
+        },
+      ],
+    }).data[0];
+    expect(profile?.profile_picture).toBe("https://cdn.example.com/photo.jpg");
+  });
   test("canonicalizes the Kick id and keeps a profile email when present", () => {
     const withEmail = kickProfileSchema.parse({
       data: [{ user_id: 123, name: "Streamer", email: "Streamer@Example.com" }],

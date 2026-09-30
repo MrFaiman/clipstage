@@ -348,7 +348,11 @@ export function Dashboard({
               onClick={() => navigate("settings")}
               aria-current={section === "settings" ? "page" : undefined}
             >
-              <Avatar name={viewer.name} className="size-8 ring-0" />
+              <Avatar
+                name={viewer.name}
+                avatarUrl={viewer.avatarUrl}
+                className="size-8 ring-0"
+              />
               <span className="min-w-0 flex-1 text-left">
                 <span className="block truncate text-xs font-semibold text-white/90">
                   {viewer.name}
@@ -414,6 +418,7 @@ export function Dashboard({
                 <Avatar
                   key={member.id}
                   name={member.name}
+                  avatarUrl={member.avatarUrl}
                   className="size-7 text-[9px]"
                 />
               ))}
