@@ -49,6 +49,7 @@ model OAuthAccount {
   email          String?
   accessToken    String // AES-256-GCM encrypted; never returned by the API
   refreshToken   String?
+  needsReconnect Boolean @default(false)
   expiresAt      DateTime
   scopes         String[]
   user           User     @relation(fields: [userId], references: [id], onDelete: Cascade)

@@ -15,13 +15,18 @@ import type {
   Viewer,
   Workspace,
 } from "@clipstage/contracts";
-import { hashToken, randomToken } from "../src/common/crypto";
+import { decrypt, encrypt, hashToken, randomToken } from "../src/common/crypto";
 import {
   claimInvites,
   type WorkspacesService,
 } from "../src/workspaces/workspaces.service";
 import { AuthService } from "../src/auth/auth.service";
-import type { KickProvider } from "../src/auth/kick.provider";
+import {
+  KickRefreshRejected,
+  type KickProvider,
+} from "../src/auth/kick.provider";
+import { KickTokenService } from "../src/auth/kick-token.service";
+import { ServiceUnavailableException } from "@nestjs/common";
 import type { Database } from "../src/common/database";
 import type { Request, Response } from "express";
 import { loadEnv } from "../src/config";
@@ -486,6 +491,7 @@ integration("real API + PostgreSQL + S3", () => {
           userId: user!.id,
           provider: "KICK",
           providerUserId: primaryId,
+          needsReconnect: true,
         },
       });
       for (const provider of ["KICK", "TWITCH", "YOUTUBE"] as const) {
@@ -519,6 +525,10 @@ integration("real API + PostgreSQL + S3", () => {
           .accessToken,
       ).toBe("placeholder");
       await callback(user!.id, primaryId); // Refresh the same connection without creating another row.
+      expect(
+        (await db.oAuthAccount.findUniqueOrThrow({ where: { id: primary.id } }))
+          .needsReconnect,
+      ).toBe(false);
       expect(
         await db.oAuthAccount.count({
           where: { userId: user!.id, provider: "KICK" },
@@ -559,6 +569,135 @@ integration("real API + PostgreSQL + S3", () => {
       await db.user.deleteMany({
         where: { id: { in: users.map((user) => user.id) } },
       });
+    }
+  }, 15000);
+  test("Kick tokens refresh on demand with row locking and reconnect flags", async () => {
+    const env = loadEnv({ ...Bun.env, NODE_ENV: "test" });
+    const user = await db.user.create({ data: { name: "Refresh test" } });
+    const token = randomToken();
+    let calls = 0;
+    let response: "success" | "retain" | "reject" | "temporary" = "success";
+    const kick = {
+      refresh: async (refreshToken: string) => {
+        calls++;
+        expect(refreshToken).toBe("old-refresh");
+        await Bun.sleep(50); // Give a concurrent transaction time to wait for the row lock.
+        if (response === "reject") throw new KickRefreshRejected();
+        if (response === "temporary")
+          throw new ServiceUnavailableException("Kick temporarily unavailable");
+        return {
+          access_token: "new-access",
+          refresh_token: response === "retain" ? undefined : "new-refresh",
+          expires_in: 3600,
+          scope: "user:read",
+        };
+      },
+    } as unknown as KickProvider;
+    const service = new KickTokenService(db as Database, env, kick);
+    try {
+      const account = await db.oAuthAccount.create({
+        data: {
+          userId: user.id,
+          provider: "KICK",
+          providerUserId: randomToken(),
+          username: "RefreshTester",
+          accessToken: encrypt("old-access", env.TOKEN_ENCRYPTION_KEY),
+          refreshToken: encrypt("old-refresh", env.TOKEN_ENCRYPTION_KEY),
+          expiresAt: new Date(Date.now() + 120000),
+          scopes: ["user:read"],
+        },
+      });
+      expect(await service.accessToken(account.id)).toBe("old-access");
+      expect(calls).toBe(0);
+      const reset = async () =>
+        db.oAuthAccount.update({
+          where: { id: account.id },
+          data: {
+            accessToken: encrypt("old-access", env.TOKEN_ENCRYPTION_KEY),
+            refreshToken: encrypt("old-refresh", env.TOKEN_ENCRYPTION_KEY),
+            expiresAt: new Date(Date.now() - 1000),
+            needsReconnect: false,
+          },
+        });
+      await reset();
+      expect(
+        await Promise.all([
+          service.accessToken(account.id),
+          service.accessToken(account.id),
+        ]),
+      ).toEqual(["new-access", "new-access"]);
+      expect(calls).toBe(1);
+      const rotated = await db.oAuthAccount.findUniqueOrThrow({
+        where: { id: account.id },
+      });
+      expect(decrypt(rotated.accessToken, env.TOKEN_ENCRYPTION_KEY)).toBe(
+        "new-access",
+      );
+      expect(decrypt(rotated.refreshToken!, env.TOKEN_ENCRYPTION_KEY)).toBe(
+        "new-refresh",
+      );
+      expect(rotated.expiresAt.getTime()).toBeGreaterThan(Date.now() + 60000);
+      await reset();
+      response = "retain";
+      expect(await service.accessToken(account.id)).toBe("new-access");
+      expect(
+        decrypt(
+          (
+            await db.oAuthAccount.findUniqueOrThrow({
+              where: { id: account.id },
+            })
+          ).refreshToken!,
+          env.TOKEN_ENCRYPTION_KEY,
+        ),
+      ).toBe("old-refresh");
+      const before = await reset();
+      response = "temporary";
+      await expect(service.accessToken(account.id)).rejects.toMatchObject({
+        status: 503,
+      });
+      const unchanged = await db.oAuthAccount.findUniqueOrThrow({
+        where: { id: account.id },
+      });
+      expect(unchanged.needsReconnect).toBe(false);
+      expect(unchanged.accessToken).toBe(before.accessToken);
+      response = "reject";
+      await expect(service.accessToken(account.id)).rejects.toMatchObject({
+        status: 401,
+      });
+      expect(
+        (await db.oAuthAccount.findUniqueOrThrow({ where: { id: account.id } }))
+          .needsReconnect,
+      ).toBe(true);
+      const priorCalls = calls;
+      await expect(service.accessToken(account.id)).rejects.toMatchObject({
+        status: 401,
+      });
+      expect(calls).toBe(priorCalls);
+      await db.session.create({
+        data: {
+          userId: user.id,
+          tokenHash: hashToken(token),
+          expiresAt: new Date(Date.now() + 86400000),
+        },
+      });
+      const me = (await (await request("/auth/me", token)).json()) as Viewer;
+      expect(me.connections[0]?.needsReconnect).toBe(true);
+      expect(me.connections[0]).not.toHaveProperty("accessToken");
+      await reset();
+      await db.oAuthAccount.update({
+        where: { id: account.id },
+        data: { refreshToken: null },
+      });
+      await expect(service.accessToken(account.id)).rejects.toMatchObject({
+        status: 401,
+      });
+      expect(
+        (await db.oAuthAccount.findUniqueOrThrow({ where: { id: account.id } }))
+          .needsReconnect,
+      ).toBe(true);
+      expect(calls).toBe(priorCalls);
+    } finally {
+      await db.user.delete({ where: { id: user.id } });
     }
   }, 15000);
   test("cookie auth, tenant isolation, and owner-only operations", async () => {

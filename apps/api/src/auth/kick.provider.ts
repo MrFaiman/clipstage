@@ -7,9 +7,15 @@ import { z } from "zod";
 import { ENV, type Env } from "../config";
 import { pkceChallenge } from "../common/crypto";
 
+export class KickRefreshRejected extends Error {
+  constructor() {
+    super("Kick refresh token was rejected");
+  }
+}
+
 const tokenSchema = z.object({
   access_token: z.string().min(1),
-  refresh_token: z.string().optional(),
+  refresh_token: z.string().min(1).optional(),
   expires_in: z.coerce.number().finite().positive(),
   scope: z.string().default("user:read"),
 });
@@ -71,6 +77,37 @@ export class KickProvider {
       code_challenge_method: "S256",
     }).toString();
     return url.toString();
+  }
+  async refresh(refreshToken: string) {
+    if (!this.env.KICK_CLIENT_ID || !this.env.KICK_CLIENT_SECRET)
+      throw new ServiceUnavailableException("Kick OAuth is not configured yet");
+    try {
+      const response = await fetch("https://id.kick.com/oauth/token", {
+        method: "POST",
+        headers: { "Content-Type": "application/x-www-form-urlencoded" },
+        body: new URLSearchParams({
+          grant_type: "refresh_token",
+          refresh_token: refreshToken,
+          client_id: this.env.KICK_CLIENT_ID,
+          client_secret: this.env.KICK_CLIENT_SECRET,
+        }),
+        signal: AbortSignal.timeout(15000),
+        redirect: "error", // Never forward credentials to a redirect target.
+      });
+      if (response.status === 400 || response.status === 401)
+        throw new KickRefreshRejected();
+      if (!response.ok)
+        throw new ServiceUnavailableException(
+          "Kick is temporarily unavailable",
+        );
+      return tokenSchema.parse(await response.json());
+    } catch (error) {
+      if (error instanceof KickRefreshRejected) throw error;
+      // Do not expose provider response bodies or transport errors with secrets.
+      throw new ServiceUnavailableException(
+        "Kick token refresh is temporarily unavailable",
+      );
+    }
   }
   async exchange(code: string, verifier: string) {
     const response = await fetch("https://id.kick.com/oauth/token", {

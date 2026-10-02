@@ -183,6 +183,7 @@ export class AuthService {
           });
         }
         const data = {
+          needsReconnect: false,
           username: profile.name,
           email: profile.email,
           accessToken: encrypt(
@@ -257,7 +258,14 @@ export class AuthService {
         id: true,
         name: true,
         avatarUrl: true,
-        accounts: { select: { id: true, provider: true, username: true } },
+        accounts: {
+          select: {
+            id: true,
+            provider: true,
+            username: true,
+            needsReconnect: true,
+          },
+        },
         memberships: {
           orderBy: { createdAt: "asc" },
           select: {

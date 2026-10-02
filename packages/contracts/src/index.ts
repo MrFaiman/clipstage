@@ -123,6 +123,7 @@ export interface Connection {
   id: string;
   provider: Provider;
   username: string;
+  needsReconnect: boolean;
 }
 export interface Viewer extends Person {
   workspaces: Workspace[];

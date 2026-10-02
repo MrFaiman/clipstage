@@ -1,8 +1,103 @@
 import "reflect-metadata";
-import { describe, expect, test } from "bun:test";
-import { kickProfileSchema, KickProvider } from "../src/auth/kick.provider";
+import { describe, expect, spyOn, test } from "bun:test";
+import {
+  kickProfileSchema,
+  KickProvider,
+  KickRefreshRejected,
+} from "../src/auth/kick.provider";
 import { loadEnv } from "../src/config";
 import { pkceChallenge } from "../src/common/crypto";
+
+const refreshEnv = loadEnv({
+  DATABASE_URL: "postgresql://user:pass@localhost:5432/test",
+  TOKEN_ENCRYPTION_KEY: "aa".repeat(32),
+  S3_BUCKET: "test",
+  S3_ACCESS_KEY_ID: "test",
+  S3_SECRET_ACCESS_KEY: "test",
+  KICK_CLIENT_ID: "client",
+  KICK_CLIENT_SECRET: "secret",
+});
+
+describe("Kick refresh", () => {
+  test("sends a refresh-token grant and validates rotated credentials", async () => {
+    const fetch = spyOn(globalThis, "fetch").mockImplementation((async (
+      url: Parameters<typeof globalThis.fetch>[0],
+      init: Parameters<typeof globalThis.fetch>[1],
+    ) => {
+      expect(String(url)).toBe("https://id.kick.com/oauth/token");
+      expect(init?.method).toBe("POST");
+      expect(init?.redirect).toBe("error");
+      const body = new URLSearchParams(String(init?.body));
+      expect(body.get("grant_type")).toBe("refresh_token");
+      expect(body.get("refresh_token")).toBe("old-refresh");
+      expect(body.get("client_secret")).toBe("secret");
+      return Response.json({
+        access_token: "fresh",
+        refresh_token: "rotated",
+        expires_in: 3600,
+      });
+    }) as typeof globalThis.fetch);
+    try {
+      expect(
+        await new KickProvider(refreshEnv).refresh("old-refresh"),
+      ).toMatchObject({
+        access_token: "fresh",
+        refresh_token: "rotated",
+        scope: "user:read",
+      });
+    } finally {
+      fetch.mockRestore();
+    }
+  });
+  test.each([400, 401])(
+    "recognizes rejected refresh tokens (%p)",
+    async (status) => {
+      const fetch = spyOn(globalThis, "fetch").mockResolvedValue(
+        new Response("Do not expose provider errors", { status }),
+      );
+      try {
+        await expect(
+          new KickProvider(refreshEnv).refresh("old-refresh"),
+        ).rejects.toBeInstanceOf(KickRefreshRejected);
+      } finally {
+        fetch.mockRestore();
+      }
+    },
+  );
+  test.each([403, 429, 500, 503])(
+    "temporary/provider errors return 503 (%p)",
+    async (status) => {
+      const fetch = spyOn(globalThis, "fetch").mockResolvedValue(
+        new Response("Sensitive provider details", { status }),
+      );
+      try {
+        await expect(
+          new KickProvider(refreshEnv).refresh("old-refresh"),
+        ).rejects.toMatchObject({ status: 503 });
+      } finally {
+        fetch.mockRestore();
+      }
+    },
+  );
+  test("timeouts and malformed token responses return 503", async () => {
+    const fetch = spyOn(globalThis, "fetch").mockRejectedValue(
+      new DOMException("Timed out", "TimeoutError"),
+    );
+    try {
+      await expect(
+        new KickProvider(refreshEnv).refresh("old-refresh"),
+      ).rejects.toMatchObject({ status: 503 });
+      fetch.mockResolvedValue(
+        Response.json({ access_token: "", expires_in: -1 }),
+      );
+      await expect(
+        new KickProvider(refreshEnv).refresh("old-refresh"),
+      ).rejects.toMatchObject({ status: 503 });
+    } finally {
+      fetch.mockRestore();
+    }
+  });
+});
 
 describe("Kick provider boundary", () => {
   test("requests basic profile scope, state and S256 PKCE", () => {

@@ -9,6 +9,7 @@ import { AuthService } from "./auth/auth.service";
 import { AuthCleanupService } from "./auth/auth-cleanup.service";
 import { AuthController } from "./auth/auth.controller";
 import { KickProvider } from "./auth/kick.provider";
+import { KickTokenService } from "./auth/kick-token.service";
 import { WorkspacesService } from "./workspaces/workspaces.service";
 import { WorkspacesController } from "./workspaces/workspaces.controller";
 import { ClipsService } from "./clips/clips.service";
@@ -40,6 +41,7 @@ export class AppModule {
         AuthService,
         AuthCleanupService,
         KickProvider,
+        KickTokenService,
         WorkspacesService,
         ClipsService,
         StorageService,

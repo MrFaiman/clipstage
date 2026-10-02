@@ -1,0 +1,1 @@
+ALTER TABLE "OAuthAccount" ADD COLUMN "needsReconnect" BOOLEAN NOT NULL DEFAULT false;

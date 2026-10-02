@@ -26,7 +26,14 @@ export const demoMembers: Member[] = [
 ];
 export const demoViewer: Viewer = {
   ...demoMembers[0]!,
-  connections: [{ id: "demo-kick", provider: "KICK", username: "alexplays" }],
+  connections: [
+    {
+      id: "demo-kick",
+      provider: "KICK",
+      username: "alexplays",
+      needsReconnect: false,
+    },
+  ],
   workspaces: [
     {
       id: "demo-studio",
