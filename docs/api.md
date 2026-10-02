@@ -23,6 +23,10 @@ Relevant statuses: 400 invalid input/pending upload, 401 absent/expired authenti
 
 Each user may have at most one identity per provider (Kick, Twitch, YouTube). Only Kick OAuth is implemented today. A signed-in Kick callback may connect Kick if not already linked, or refresh credentials for the same linked Kick identity. Attempting to link a different Kick identity returns 409 without replacing the existing connection. Identities owned by another user also return 409; users are never merged by email.
 
+`/auth/me` connections contain `{ id, provider, username, needsReconnect }` and never provider tokens. A healthy linked account shows Connected with no connect/reconnect action. `needsReconnect: true` shows Reconnect and requires OAuth authorization for the same linked identity. Successful authorization clears the flag.
+
+Kick token refresh is internal and on demand, not a browser endpoint or scheduled task. No current feature calls it yet. Future authorized API consumers use `KickTokenService.accessToken(accountId)`; rejected/missing refresh credentials mark the connection and produce a reconnect-required 401. Temporary provider errors produce 503 without marking the connection. Browser sessions and OBS credentials remain independent.
+
 ## Browser sessions
 
 `GET /auth/sessions` returns an array of `{ id, createdAt, lastUsedAt, expiresAt, userAgent, current }`. Timestamps are ISO 8601; `userAgent` is nullable and limited to 256 characters when recorded at sign-in. `lastUsedAt` updates at most daily and is not a precise activity log. No token hashes or bearer tokens are returned. `/auth/me` continues to omit sessions.

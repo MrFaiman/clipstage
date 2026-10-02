@@ -548,7 +548,7 @@ export function SettingsPanel({
     </>
   );
 }
-function ConnectionsPanel({
+export function ConnectionsPanel({
   connections,
   demo,
 }: {
@@ -564,9 +564,15 @@ function ConnectionsPanel({
             <span className="grid size-12 place-items-center rounded-xl bg-[#e6f9d7]">
               <KickMark className="size-6" />
             </span>
-            <span className="status-badge status-approved">
+            <span
+              className={`status-badge ${kick?.needsReconnect ? "status-editing" : "status-approved"}`}
+            >
               <span />
-              {kick ? "Connected" : "Available"}
+              {kick?.needsReconnect
+                ? "Reconnect required"
+                : kick
+                  ? "Connected"
+                  : "Available"}
             </span>
           </div>
           <h2 className="mt-5 text-xl font-semibold">Kick</h2>
@@ -578,18 +584,26 @@ function ConnectionsPanel({
             {kick && (
               <div className="flex items-center justify-between rounded-lg bg-muted px-3 py-2.5 text-xs">
                 <span>@{kick.username}</span>
-                <Check
-                  size={13}
-                  className="text-green-700"
-                  aria-hidden="true"
-                />
+                {!kick.needsReconnect && (
+                  <Check
+                    size={13}
+                    className="text-green-700"
+                    aria-hidden="true"
+                  />
+                )}
               </div>
             )}
           </div>
-          {!kick && (
+          {kick?.needsReconnect && (
+            <p className="mb-4 text-sm leading-6 text-muted-foreground">
+              Kick authorization needs to be renewed. Reconnect @{kick.username}{" "}
+              to restore access. Your clips and OBS devices are unaffected.
+            </p>
+          )}
+          {(!kick || kick.needsReconnect) && (
             <Button asChild variant="outline" className="w-full">
               <a href={demo ? "/login" : `${API_URL}/auth/kick`}>
-                <Plus /> Connect Kick
+                <Plus /> {kick ? "Reconnect Kick" : "Connect Kick"}
               </a>
             </Button>
           )}
