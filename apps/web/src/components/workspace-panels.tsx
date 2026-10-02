@@ -540,7 +540,7 @@ export function SettingsPanel({
       <section aria-labelledby="connections-heading">
         <div className="settings-kicker">
           <h2 id="connections-heading">Connections</h2>
-          <p>Meet your stream where it lives.</p>
+          <p>One connection per platform: Kick, Twitch, and YouTube.</p>
         </div>
         <ConnectionsPanel connections={viewer.connections} demo={demo} />
       </section>
@@ -555,9 +555,7 @@ function ConnectionsPanel({
   connections: Connection[];
   demo: boolean;
 }) {
-  const kick = connections.filter(
-    (connection) => connection.provider === "KICK",
-  );
+  const kick = connections.find((connection) => connection.provider === "KICK");
   return (
     <>
       <div className="connection-cards">
@@ -568,7 +566,7 @@ function ConnectionsPanel({
             </span>
             <span className="status-badge status-approved">
               <span />
-              {kick.length ? "Connected" : "Available"}
+              {kick ? "Connected" : "Available"}
             </span>
           </div>
           <h2 className="mt-5 text-xl font-semibold">Kick</h2>
@@ -577,22 +575,24 @@ function ConnectionsPanel({
             profile only.
           </p>
           <div className="my-5 space-y-2">
-            {kick.map((connection) => (
-              <div
-                key={connection.id}
-                className="flex items-center justify-between rounded-lg bg-muted px-3 py-2.5 text-xs"
-              >
-                <span>@{connection.username}</span>
-                <Check size={13} className="text-green-700" />
+            {kick && (
+              <div className="flex items-center justify-between rounded-lg bg-muted px-3 py-2.5 text-xs">
+                <span>@{kick.username}</span>
+                <Check
+                  size={13}
+                  className="text-green-700"
+                  aria-hidden="true"
+                />
               </div>
-            ))}
+            )}
           </div>
-          <Button asChild variant="outline" className="w-full">
-            <a href={demo ? "/login" : `${API_URL}/auth/kick`}>
-              <Plus />{" "}
-              {kick.length ? "Connect another Kick account" : "Connect Kick"}
-            </a>
-          </Button>
+          {!kick && (
+            <Button asChild variant="outline" className="w-full">
+              <a href={demo ? "/login" : `${API_URL}/auth/kick`}>
+                <Plus /> Connect Kick
+              </a>
+            </Button>
+          )}
         </div>
         {[
           {

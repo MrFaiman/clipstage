@@ -7,7 +7,7 @@ import {
   UnauthorizedException,
 } from "@nestjs/common";
 import type { CookieOptions, Request, Response } from "express";
-import type { Session } from "@clipstage/database";
+import { Prisma, type Session } from "@clipstage/database";
 import type { ActiveSession } from "@clipstage/contracts";
 import { Database } from "../common/database";
 import { encrypt, hashToken, randomToken, safeEqual } from "../common/crypto";
@@ -132,76 +132,100 @@ export class AuthService {
       code,
       attempt.verifier,
     );
-    const userId = await this.db.$transaction(async (tx) => {
-      const identity = await tx.oAuthAccount.findUnique({
-        where: {
-          provider_providerUserId: {
-            provider: "KICK",
-            providerUserId: profile.user_id,
-          },
-        },
-      });
-      if (attempt.userId && identity && identity.userId !== attempt.userId)
-        throw new ConflictException(
-          "This Kick account belongs to another user",
-        );
-      let id = attempt.userId ?? identity?.userId;
-      if (!id) {
-        const user = await tx.user.create({
-          data: {
-            name: profile.name,
-            avatarUrl: profile.profile_picture ?? null,
-            memberships: {
-              create: {
-                role: "OWNER",
-                workspace: {
-                  create: { name: `${profile.name}'s studio`.slice(0, 60) },
-                },
-              },
+    const userId = await this.db
+      .$transaction(async (tx) => {
+        const identity = await tx.oAuthAccount.findUnique({
+          where: {
+            provider_providerUserId: {
+              provider: "KICK",
+              providerUserId: profile.user_id,
             },
           },
         });
-        id = user.id;
-      } else if (!attempt.userId) {
-        // Refresh the returning user's picture. Linking another Kick identity
-        // must not silently replace the primary account's profile photo.
-        await tx.user.update({
-          where: { id },
-          data: { avatarUrl: profile.profile_picture ?? null },
+        if (attempt.userId && identity && identity.userId !== attempt.userId)
+          throw new ConflictException(
+            "This Kick account belongs to another user",
+          );
+        if (attempt.userId) {
+          const existing = await tx.oAuthAccount.findUnique({
+            where: {
+              userId_provider: { userId: attempt.userId, provider: "KICK" },
+            },
+          });
+          if (existing && existing.providerUserId !== profile.user_id)
+            throw new ConflictException(
+              "Your account already has a Kick connection. Reconnect the same Kick account.",
+            );
+        }
+        let id = attempt.userId ?? identity?.userId;
+        if (!id) {
+          const user = await tx.user.create({
+            data: {
+              name: profile.name,
+              avatarUrl: profile.profile_picture ?? null,
+              memberships: {
+                create: {
+                  role: "OWNER",
+                  workspace: {
+                    create: { name: `${profile.name}'s studio`.slice(0, 60) },
+                  },
+                },
+              },
+            },
+          });
+          id = user.id;
+        } else if (!attempt.userId) {
+          // Refresh the returning user's picture. Linking another Kick identity
+          // must not silently replace the primary account's profile photo.
+          await tx.user.update({
+            where: { id },
+            data: { avatarUrl: profile.profile_picture ?? null },
+          });
+        }
+        const data = {
+          username: profile.name,
+          email: profile.email,
+          accessToken: encrypt(
+            tokens.access_token,
+            this.env.TOKEN_ENCRYPTION_KEY,
+          ),
+          refreshToken: tokens.refresh_token
+            ? encrypt(tokens.refresh_token, this.env.TOKEN_ENCRYPTION_KEY)
+            : undefined,
+          expiresAt: new Date(Date.now() + tokens.expires_in * 1000),
+          scopes: tokens.scope.split(" "),
+        };
+        if (identity) {
+          await tx.oAuthAccount.update({ where: { id: identity.id }, data });
+        } else {
+          // A concurrent identity claim must fail its unique constraint, not silently link another user.
+          await tx.oAuthAccount.create({
+            data: {
+              ...data,
+              userId: id,
+              provider: "KICK",
+              providerUserId: profile.user_id,
+            },
+          });
+        }
+        await claimInvites(tx, id, {
+          email: profile.email,
+          username: profile.name,
         });
-      }
-      const data = {
-        username: profile.name,
-        email: profile.email,
-        accessToken: encrypt(
-          tokens.access_token,
-          this.env.TOKEN_ENCRYPTION_KEY,
-        ),
-        refreshToken: tokens.refresh_token
-          ? encrypt(tokens.refresh_token, this.env.TOKEN_ENCRYPTION_KEY)
-          : undefined,
-        expiresAt: new Date(Date.now() + tokens.expires_in * 1000),
-        scopes: tokens.scope.split(" "),
-      };
-      if (identity) {
-        await tx.oAuthAccount.update({ where: { id: identity.id }, data });
-      } else {
-        // A concurrent identity claim must fail its unique constraint, not silently link another user.
-        await tx.oAuthAccount.create({
-          data: {
-            ...data,
-            userId: id,
-            provider: "KICK",
-            providerUserId: profile.user_id,
-          },
-        });
-      }
-      await claimInvites(tx, id, {
-        email: profile.email,
-        username: profile.name,
+        return id;
+      })
+      .catch((error: unknown) => {
+        // The DB constraint is authoritative even for concurrent OAuth callbacks.
+        // Never replace an existing identity or silently merge another user's account.
+        if (
+          error instanceof Prisma.PrismaClientKnownRequestError &&
+          error.code === "P2002"
+        )
+          throw new ConflictException(
+            "This identity is already connected, or your account already has a connection for this provider.",
+          );
+        throw error;
       });
-      return id;
-    });
     const oldSession = await this.session(req);
     const token = randomToken();
     const now = new Date();

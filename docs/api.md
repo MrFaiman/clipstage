@@ -19,6 +19,10 @@ Errors have this shape:
 
 Relevant statuses: 400 invalid input/pending upload, 401 absent/expired authentication, 403 insufficient role or untrusted mutation origin, 404 unavailable resource/workspace, 409 conflict, 429 rate limit. Successful `POST` endpoints return 201 by default, `PATCH` and `DELETE` return 200. An already-completed upload is safe to complete again.
 
+## Provider connections
+
+Each user may have at most one identity per provider (Kick, Twitch, YouTube). Only Kick OAuth is implemented today. A signed-in Kick callback may connect Kick if not already linked, or refresh credentials for the same linked Kick identity. Attempting to link a different Kick identity returns 409 without replacing the existing connection. Identities owned by another user also return 409; users are never merged by email.
+
 ## Browser sessions
 
 `GET /auth/sessions` returns an array of `{ id, createdAt, lastUsedAt, expiresAt, userAgent, current }`. Timestamps are ISO 8601; `userAgent` is nullable and limited to 256 characters when recorded at sign-in. `lastUsedAt` updates at most daily and is not a precise activity log. No token hashes or bearer tokens are returned. `/auth/me` continues to omit sessions.
@@ -30,7 +34,7 @@ Session mutations require the exact app Origin. A successful DELETE returns `{ "
 | Method | Route                                                | Access / purpose                                                          |
 | ------ | ---------------------------------------------------- | ------------------------------------------------------------------------- |
 | GET    | `/health`                                            | Public liveness                                                           |
-| GET    | `/auth/kick`                                         | Start login or link another Kick identity if already signed in            |
+| GET    | `/auth/kick`                                         | Sign in, connect Kick once, or reconnect the same linked identity            |
 | GET    | `/auth/kick/callback`                                | Browser-bound state + PKCE callback                                       |
 | GET    | `/auth/me`                                           | Safe user profile, connections, workspace memberships                     |
 | POST   | `/auth/logout`                                       | Revoke current session and clear cookie                                   |

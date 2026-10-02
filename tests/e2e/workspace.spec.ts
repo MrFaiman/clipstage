@@ -138,6 +138,13 @@ test("team and integration panels are honest about demo and upcoming providers",
   await expect(
     page.getByRole("heading", { name: "Kick", exact: true }),
   ).toBeVisible();
+  await expect(
+    page.getByText("One connection per platform: Kick, Twitch, and YouTube."),
+  ).toBeVisible();
+  await expect(
+    page.getByRole("link", { name: /^(Connect|Reconnect) Kick$/ }),
+  ).toHaveCount(0);
+  await expect(page.getByText("Connect another Kick account")).toHaveCount(0);
   const sessions = page.getByRole("region", { name: "Active sessions" });
   await expect(
     sessions.getByRole("heading", { name: "Chrome on macOS" }),

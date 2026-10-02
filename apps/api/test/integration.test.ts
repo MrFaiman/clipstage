@@ -16,7 +16,15 @@ import type {
   Workspace,
 } from "@clipstage/contracts";
 import { hashToken, randomToken } from "../src/common/crypto";
-import { claimInvites } from "../src/workspaces/workspaces.service";
+import {
+  claimInvites,
+  type WorkspacesService,
+} from "../src/workspaces/workspaces.service";
+import { AuthService } from "../src/auth/auth.service";
+import type { KickProvider } from "../src/auth/kick.provider";
+import type { Database } from "../src/common/database";
+import type { Request, Response } from "express";
+import { loadEnv } from "../src/config";
 
 const integration =
   process.env.RUN_INTEGRATION === "1" ? describe : describe.skip;
@@ -400,6 +408,159 @@ integration("real API + PostgreSQL + S3", () => {
       await db.device.findUnique({ where: { id: device.id } }),
     ).not.toBeNull();
   });
+  test("one OAuth connection per provider is enforced, including reconnects and concurrent links", async () => {
+    const users = await Promise.all(
+      ["Linked account", "Concurrent link", "Other identity owner"].map(
+        (name) => db.user.create({ data: { name } }),
+      ),
+    );
+    const [user, concurrent, outsider] = users;
+    const primaryId = BigInt(
+      `0x${hashToken(randomToken()).slice(0, 12)}`,
+    ).toString();
+    const foreignId = BigInt(
+      `0x${hashToken(randomToken()).slice(0, 12)}`,
+    ).toString();
+    const tokens = {
+      access_token: "updated-access",
+      refresh_token: "updated-refresh",
+      expires_in: 3600,
+      scope: "user:read",
+    };
+    const kick = {
+      exchange: async (code: string) => ({
+        tokens,
+        profile: {
+          user_id: code,
+          name: "LinkedStreamer",
+          email: null,
+          profile_picture: null,
+        },
+      }),
+    } as unknown as KickProvider;
+    const auth = new AuthService(
+      db as Database,
+      loadEnv({ ...Bun.env, NODE_ENV: "test" }),
+      kick,
+      {} as WorkspacesService,
+    );
+    const accountData = {
+      username: "OriginalStreamer",
+      accessToken: "placeholder",
+      expiresAt: new Date(Date.now() + 3600000),
+      scopes: ["user:read"],
+    };
+    async function callback(userId: string, code: string) {
+      const state = randomToken(),
+        token = randomToken();
+      await db.session.create({
+        data: {
+          userId,
+          tokenHash: hashToken(token),
+          expiresAt: new Date(Date.now() + 86400000),
+        },
+      });
+      await db.oAuthAttempt.create({
+        data: {
+          userId,
+          stateHash: hashToken(state),
+          verifier: "test-verifier",
+          expiresAt: new Date(Date.now() + 60000),
+        },
+      });
+      const req = {
+        cookies: { cs_oauth: state, cs_session: token },
+        headers: {},
+      } as unknown as Request;
+      const res = {
+        clearCookie: () => {},
+        cookie: () => {},
+        redirect: () => {},
+      } as unknown as Response;
+      return auth.callback(req, res, code, state);
+    }
+    try {
+      const primary = await db.oAuthAccount.create({
+        data: {
+          ...accountData,
+          userId: user!.id,
+          provider: "KICK",
+          providerUserId: primaryId,
+        },
+      });
+      for (const provider of ["KICK", "TWITCH", "YOUTUBE"] as const) {
+        if (provider !== "KICK")
+          await db.oAuthAccount.create({
+            data: {
+              ...accountData,
+              userId: user!.id,
+              provider,
+              providerUserId: primaryId,
+            },
+          });
+        await expect(
+          Promise.resolve(
+            db.oAuthAccount.create({
+              data: {
+                ...accountData,
+                userId: user!.id,
+                provider,
+                providerUserId: foreignId,
+              },
+            }),
+          ),
+        ).rejects.toMatchObject({ code: "P2002" });
+      }
+      await expect(callback(user!.id, foreignId)).rejects.toMatchObject({
+        status: 409,
+      });
+      expect(
+        (await db.oAuthAccount.findUniqueOrThrow({ where: { id: primary.id } }))
+          .accessToken,
+      ).toBe("placeholder");
+      await callback(user!.id, primaryId); // Refresh the same connection without creating another row.
+      expect(
+        await db.oAuthAccount.count({
+          where: { userId: user!.id, provider: "KICK" },
+        }),
+      ).toBe(1);
+      expect(
+        (await db.oAuthAccount.findUniqueOrThrow({ where: { id: primary.id } }))
+          .accessToken,
+      ).not.toBe("placeholder");
+      await db.oAuthAccount.create({
+        data: {
+          ...accountData,
+          userId: outsider!.id,
+          provider: "KICK",
+          providerUserId: foreignId,
+        },
+      });
+      await expect(callback(user!.id, foreignId)).rejects.toMatchObject({
+        status: 409,
+      });
+      const codes = [primaryId + "1", primaryId + "2"];
+      const results = await Promise.allSettled(
+        codes.map((code) => callback(concurrent!.id, code)),
+      );
+      expect(
+        results.filter((result) => result.status === "fulfilled"),
+      ).toHaveLength(1);
+      const failed = results.find(
+        (result) => result.status === "rejected",
+      ) as PromiseRejectedResult;
+      expect(failed.reason).toMatchObject({ status: 409 });
+      expect(
+        await db.oAuthAccount.count({
+          where: { userId: concurrent!.id, provider: "KICK" },
+        }),
+      ).toBe(1);
+    } finally {
+      await db.user.deleteMany({
+        where: { id: { in: users.map((user) => user.id) } },
+      });
+    }
+  }, 15000);
   test("cookie auth, tenant isolation, and owner-only operations", async () => {
     expect((await request("/auth/me")).status).toBe(401);
     const me = (await (await request("/auth/me", ownerToken)).json()) as Viewer;

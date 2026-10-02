@@ -72,7 +72,7 @@ bun run dev
 - API: **[http://localhost:4000/v1](http://localhost:4000/v1)**
 - Liveness: `GET http://localhost:4000/v1/health`
 
-Sign in, invite an editor from **Your team**, then upload a source or pair OBS from **OBS integration**. An invitation matches a Kick email or username. Someone who already uses Clipstage joins immediately; otherwise they join the next time they sign in with that Kick account. No email is sent, and a pending invite expires in seven days. A user can join multiple workspaces and connect multiple Kick identities. Existing identities are never merged by email.
+Sign in, invite an editor from **Your team**, then upload a source or pair OBS from **OBS integration**. An invitation matches a Kick email or username. Someone who already uses Clipstage joins immediately; otherwise they join the next time they sign in with that Kick account. No email is sent, and a pending invite expires in seven days. A user can join multiple workspaces and connect at most one identity per platform (one Kick, one Twitch, and one YouTube). Only Kick OAuth is currently available; reconnecting must use the same linked Kick identity. Existing identities are never merged by email.
 
 Use **localhost consistently**, not a mixture of localhost and 127.0.0.1. Restart Next after changing `NEXT_PUBLIC_`* variables. They are baked into production builds.
 
@@ -87,7 +87,7 @@ The dock controls OBS's **normal recording output**. Start/stop it independently
 
 | Feature                                                                              | Status                                                              |
 | ------------------------------------------------------------------------------------ | ------------------------------------------------------------------- |
-| Kick OAuth login and multiple Kick connections                                       | Implemented; requires your provider credentials                     |
+| Kick OAuth login and one Kick connection per account                                       | Implemented; requires your provider credentials                     |
 | Separate workspaces, owners, editors, invites by Kick email or username              | Implemented                                                         |
 | Direct browser/OBS → S3 uploads, verification, retry idempotency                     | Implemented and integration-tested                                  |
 | Scoped, revocable, 90-day OBS credentials                                            | Implemented                                                         |

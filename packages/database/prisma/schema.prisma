@@ -54,6 +54,7 @@ model OAuthAccount {
   user           User     @relation(fields: [userId], references: [id], onDelete: Cascade)
 
   @@unique([provider, providerUserId])
+  @@unique([userId, provider])
   @@index([userId])
   @@index([email])
 }
